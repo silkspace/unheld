@@ -11,7 +11,7 @@ The first client is a terminal program because two people with laptops are the m
 | `unheld id rotate` | `rotate` | L14 | New keys, a continuity statement signed by the old key, and every peer told on next send; the peer's client shows `Changed` until they re-verify. |
 | `unheld intro export [--qr]` | `intro` | | The signed public bundle to hand over by any channel, as text or a QR code on the terminal. |
 | `unheld intro import <file \| ->` | | L3 | Stages a pending peer. Sending to a pending peer is refused. |
-| `unheld verify <name>` | `verify` | L3 | Prints the pairwise safety number, waits for the other side to read theirs aloud, and asks whether every group of digits matched. The default answer is no. Only a yes mints a `Peer`. A QR scan can fill the comparison and cannot replace it. |
+| `unheld verify <name> [--qr]` | `verify` | L3 | Prints the pairwise safety number, waits for the other side to read theirs aloud, and asks whether every group of digits matched. The default answer is no. Only a yes mints a `Peer`. A QR scan can fill the comparison and cannot replace it. |
 | `unheld peers` | | L14, L18 | Every peer with its state: `Verified`, `Changed`, `Pending`, and in groups `Vouched by <name>`. |
 | `unheld send <peer> [-c clipboard \| file \| stdout]` | `seal` | L4, L8, L14 | Reads the message from stdin or the editor, seals it, pads it to a bucket, and hands the blob to the chosen carrier. Refused for `Pending` or `Changed`. |
 | `unheld open [-c clipboard \| file \| stdin]` | `open` | L11, L12, L13 | Takes a blob from the carrier, trial-decrypts across sessions, shows the message with its sender, and marks any gap in the sequence. A replayed or reflected blob is refused and counted. |

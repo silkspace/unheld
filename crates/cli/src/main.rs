@@ -37,7 +37,12 @@ enum Cmd {
         cmd: IntroCmd,
     },
     /// Compare the pairwise safety number with a peer and confirm it.
-    Verify { name: String },
+    Verify {
+        name: String,
+        /// Also draw the number as a QR code; scanning it fills the comparison and never replaces it.
+        #[arg(long)]
+        qr: bool,
+    },
     /// List peers and their verification state.
     Peers,
     /// Encrypt a message (from stdin) to a verified peer and hand the blob to a carrier.
@@ -66,7 +71,11 @@ enum IdCmd {
 #[derive(Subcommand)]
 enum IntroCmd {
     /// Print a fresh introduction to hand over out of band.
-    Export,
+    Export {
+        /// Also draw it as a QR code for a camera across the table.
+        #[arg(long)]
+        qr: bool,
+    },
     /// Import a peer's introduction from a file, or `-` for stdin.
     Import { name: String, source: String },
 }
@@ -119,9 +128,19 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
             println!("{}  {}  {}", core.name()?, core.own_fingerprint_prefix()?, dir.display());
         }
-        Cmd::Intro { cmd: IntroCmd::Export } => {
+        Cmd::Intro { cmd: IntroCmd::Export { qr } } => {
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
-            println!("{}", core.intro()?.to_text());
+            let text = core.intro()?.to_text();
+            if qr {
+                let code = qrcode::QrCode::new(text.as_bytes()).map_err(|_| Refuse::TooLarge)?;
+                let drawn = code
+                    .render::<qrcode::render::unicode::Dense1x2>()
+                    .dark_color(qrcode::render::unicode::Dense1x2::Light)
+                    .light_color(qrcode::render::unicode::Dense1x2::Dark)
+                    .build();
+                eprintln!("{drawn}");
+            }
+            println!("{text}");
         }
         Cmd::Intro { cmd: IntroCmd::Import { name, source } } => {
             let text = if source == "-" {
@@ -133,9 +152,18 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             let peer = core.import(&name, &Intro::from_text(&text)?)?;
             println!("{} staged as {:?}; run `unheld verify {}`", peer.name, peer.state, peer.name);
         }
-        Cmd::Verify { name } => {
+        Cmd::Verify { name, qr } => {
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
             let fp = core.fingerprint(&name)?;
+            if qr {
+                let code = qrcode::QrCode::new(fp.0.as_bytes()).map_err(|_| Refuse::Protocol)?;
+                let drawn = code
+                    .render::<qrcode::render::unicode::Dense1x2>()
+                    .dark_color(qrcode::render::unicode::Dense1x2::Light)
+                    .light_color(qrcode::render::unicode::Dense1x2::Dark)
+                    .build();
+                println!("{drawn}");
+            }
             println!("read these aloud and listen to theirs:\n\n  {}\n", fp.spoken());
             let confirmed = if std::io::stdin().is_terminal() {
                 print!("did every group match on both sides? [yes/NO] ");
