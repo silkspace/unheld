@@ -28,7 +28,7 @@ Every law has a phase, a test, a review layer and a screen, and this file is whe
 | L7 unlinkability | 3, 5 | statistical test on blob distribution; Tamarin equivalence where tractable | R2, R4, R7 | none |
 | L8 fail closed | 3 | proptest that every `Refuse` path allocates no blob and leaves state unchanged | R3, R4 | an error is a sentence that says what was refused and why |
 | L9 deniability | 3 | cited proof for n = 2; interface test that group sessions report `deniable = false` | R7 | group header says messages are signed among members |
-| L10 erasure | 3 | zeroise-on-drop types; memory read after `forget` and after `wipe` | R4 | expiry setting per contact; duress setup screen |
+| L10 erasure | 3 | `forget` deletes a peer's sessions and a late message is refused; `wipe` leaves no file; the duress passphrase wipes and answers as a wrong one (tests) | R4 | `forget`, `duress`, `wipe` |
 | L11 replay and reflection | 3 | adversarial carrier that replays and reflects | R4 | none; refused silently and counted |
 | L12 detectable omission | 3 | adversarial carrier that drops and reorders | R4 | a gap marker in the thread: "a message between these two was not delivered" |
 | L13 bounded state | 3 | flooding carrier; Kani on the skipped-key cap | R4 | none |
@@ -46,7 +46,7 @@ Every law has a phase, a test, a review layer and a screen, and this file is whe
 
 ## Proof of concept, what is green
 
-The workspace under `crates/` delivers criterion 1 in scripted form (intro files, a 60-digit pairwise number that agrees on both sides, send refused until confirmed), criterion 2 with file and stdio carriers and tests for L1, L3, L4, L8 and L11, and the crate-graph half of L2 as a test. Criterion 3 is covered for first contact (a welcome from an unverified sender is refused and its group deleted); the key-change half (L14) has the `Changed` state and no test yet. Criteria 4 and 5 are not started.
+The workspace under `crates/` delivers criterion 1 in scripted form (intro files, a 60-digit pairwise number that agrees on both sides, send refused until confirmed), criterion 2 with file, stdio and clipboard carriers, tests for L1, L3, L4, L8, L10, L11 and L14, and property tests over the blob parser, and the crate-graph half of L2 as a test. Criterion 3 is covered for first contact (a welcome from an unverified sender is refused and its group deleted); the key-change half (L14) has the `Changed` state and no test yet. Criteria 4 and 5 are not started.
 
 ## The MVP, as acceptance criteria
 

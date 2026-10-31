@@ -16,8 +16,9 @@ The first client is a terminal program because two people with laptops are the m
 | `unheld send <peer> [-c clipboard \| file \| stdout]` | `seal` | L4, L8, L14 | Reads the message from stdin or the editor, seals it, pads it to a bucket, and hands the blob to the chosen carrier. Refused for `Pending` or `Changed`. |
 | `unheld open [-c clipboard \| file \| stdin]` | `open` | L11, L12, L13 | Takes a blob from the carrier, trial-decrypts across sessions, shows the message with its sender, and marks any gap in the sequence. A replayed or reflected blob is refused and counted. |
 | `unheld log <peer> [--start N]` | | | Paged history with `total` and `next_start`; never truncated. |
-| `unheld forget <peer> --older-than <duration \| count>` | `forget` | L10 | Deletes keys and messages older than the bound, by time and by count together. |
-| `unheld wipe` | `wipe` | L10 | Destroys the vault. Also triggered by the duress passphrase at unlock. |
+| `unheld forget <peer>` | `forget` | L10 | Ends every session with the peer and deletes its keys; the peer stays verified and the next message starts a fresh session from a fresh introduction. The client stores no message history, so there is nothing else to forget. |
+| `unheld duress` | | L10 | Sets a duress passphrase. Unlocking with it destroys the vault and answers exactly as a wrong passphrase would. |
+| `unheld wipe` | `wipe` | L10 | Overwrites and removes the vault after a yes. |
 | `unheld devices list \| enroll \| revoke` | `enroll` | L15 | Phase 5. Enrolment shows the new device's fingerprint here and waits for yes. |
 | `unheld group new \| add \| remove \| roster` | `start`, `add`, `remove` | L16, L17, L19 | Phase 5. Refuses a large group over an unordered carrier and says which carriers would do. |
 | `unheld recover split \| join` | `split` | L21 | Phase 5. The interactive ceremony; shares shown once and never written. |
@@ -27,7 +28,7 @@ The first client is a terminal program because two people with laptops are the m
 
 ## Carriers in the first release
 
-`clipboard` puts the blob on the system clipboard and clears it after a configured interval; `file` writes or reads a path; `stdout` and `stdin` let the blob flow through pipes into any program. A blob is text-safe (base64url) so it survives every chat app and mail client we have met. The `relay` carrier arrives with Phase 5 and is the only ordered one.
+`clipboard` puts the blob on the system clipboard or reads it from there, which is how a blob reaches a chat or a mail client; `file` writes or reads a path; `stdout` and `stdin` let the blob flow through pipes into any program. A blob is text-safe (base64url) so it survives every chat app and mail client we have met. The `relay` carrier arrives with Phase 5 and is the only ordered one.
 
 ## What is deliberately absent
 

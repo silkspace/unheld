@@ -3,6 +3,10 @@
 /// Vault files and key derivation.
 pub mod vault {
     pub const FILE_NAME: &str = "vault";
+    /// The duress marker: a small file encrypted under the duress passphrase.
+    pub const DURESS_FILE_NAME: &str = "d";
+    /// Random bytes inside the duress marker, so it decrypts to something checkable.
+    pub const DURESS_MARKER_LEN: usize = 32;
     /// Format version, carried inside the ciphertext so the file has no cleartext header.
     pub const FORMAT_VERSION: u32 = 1;
     pub const SALT_LEN: usize = 16;

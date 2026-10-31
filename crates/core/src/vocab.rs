@@ -40,6 +40,8 @@ pub enum Refuse {
     CarrierIo,
     #[error("empty message")]
     EmptyMessage,
+    #[error("duress passphrase must differ from the vault passphrase")]
+    DuressSame,
     #[error("sender is not a verified peer")]
     UnknownSender,
     #[error("no session for this message")]

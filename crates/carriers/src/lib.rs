@@ -52,3 +52,24 @@ impl Carrier for StdioCarrier {
         Ok(Blob::from_text(&text)?)
     }
 }
+
+/// The system clipboard. Put copies the blob as text, get pastes it. What the clipboard
+/// holds is ciphertext, so a clipboard manager or a synced clipboard learns nothing.
+pub struct ClipboardCarrier;
+
+impl Carrier for ClipboardCarrier {
+    fn put(&mut self, blob: &Blob) -> Result<(), CarrierError> {
+        let mut cb = arboard::Clipboard::new().map_err(|_| CarrierError::Empty)?;
+        cb.set_text(blob.to_text()).map_err(|_| CarrierError::Empty)?;
+        Ok(())
+    }
+
+    fn get(&mut self) -> Result<Blob, CarrierError> {
+        let mut cb = arboard::Clipboard::new().map_err(|_| CarrierError::Empty)?;
+        let text = cb.get_text().map_err(|_| CarrierError::Empty)?;
+        if text.trim().is_empty() {
+            return Err(CarrierError::Empty);
+        }
+        Ok(Blob::from_text(&text)?)
+    }
+}

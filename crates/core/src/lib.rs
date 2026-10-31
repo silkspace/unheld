@@ -148,7 +148,16 @@ impl Core {
         if !path.exists() {
             return Err(Refuse::NoVault);
         }
-        let plain = vault::open_from_file(&path, passphrase)?;
+        let plain = match vault::open_from_file(&path, passphrase) {
+            Ok(p) => p,
+            Err(e) => {
+                // A duress passphrase destroys the vault and answers exactly as a wrong one would.
+                if duress_matches(dir, passphrase) {
+                    wipe(dir)?;
+                }
+                return Err(e);
+            }
+        };
         let state: State = serde_json::from_slice(&plain).map_err(|_| Refuse::VaultLocked)?;
         if state.version > config::vault::FORMAT_VERSION {
             return Err(Refuse::VaultLocked);
@@ -502,6 +511,61 @@ pub fn inspect(blob: &Blob) -> Outside {
     Outside { bucket, parts }
 }
 
+impl Core {
+    /// `forget`: end every session with a peer and delete its keys. The peer and its
+    /// verification stay; the next message starts a fresh session from a fresh introduction.
+    pub fn forget(&mut self, name: &str) -> Result<usize, Refuse> {
+        let rec = self.state.peers.get(name).ok_or(Refuse::UnknownPeer)?.clone();
+        let mut ended = 0;
+        for gid in &rec.groups {
+            if let Some(mut g) = MlsGroup::load(self.provider.storage(), &GroupId::from_slice(gid)).map_err(mls_err)? {
+                g.delete(self.provider.storage()).map_err(mls_err)?;
+                ended += 1;
+            }
+        }
+        if let Some(r) = self.state.peers.get_mut(name) {
+            r.groups.clear();
+        }
+        self.save()?;
+        Ok(ended)
+    }
+
+    /// Set a duress passphrase. Unlocking with it destroys the vault and answers as a wrong
+    /// passphrase would, so the person demanding it learns nothing.
+    pub fn set_duress(&self, duress: &str) -> Result<(), Refuse> {
+        if duress == self.passphrase {
+            return Err(Refuse::DuressSame);
+        }
+        let dir = self.path.parent().ok_or(Refuse::VaultIo)?;
+        let mut marker = vec![0u8; config::vault::DURESS_MARKER_LEN];
+        rand::RngCore::fill_bytes(&mut rand::rng(), &mut marker);
+        vault::seal_to_file(&dir.join(config::vault::DURESS_FILE_NAME), duress, &marker)
+    }
+}
+
+/// True when the duress marker exists and decrypts under this passphrase.
+fn duress_matches(dir: &Path, passphrase: &str) -> bool {
+    let p = dir.join(config::vault::DURESS_FILE_NAME);
+    p.exists() && vault::open_from_file(&p, passphrase).is_ok()
+}
+
+/// `wipe`: overwrite and remove the vault and the duress marker. The vault key is derived from
+/// the passphrase and never stored, so removing the ciphertext is what erasure means here.
+pub fn wipe(dir: &Path) -> Result<(), Refuse> {
+    for name in [config::vault::FILE_NAME, config::vault::DURESS_FILE_NAME] {
+        let p = dir.join(name);
+        if p.exists() {
+            let len = std::fs::metadata(&p).map(|m| m.len() as usize).unwrap_or(0);
+            let mut noise = vec![0u8; len];
+            rand::RngCore::fill_bytes(&mut rand::rng(), &mut noise);
+            let _ = std::fs::write(&p, &noise);
+            std::fs::remove_file(&p).map_err(|_| Refuse::VaultIo)?;
+        }
+    }
+    let _ = std::fs::remove_dir(dir);
+    Ok(())
+}
+
 fn parse_key_package(provider: &OpenMlsRustCrypto, bytes: &[u8]) -> Result<KeyPackage, Refuse> {
     let msg = MlsMessageIn::tls_deserialize_exact(bytes).map_err(|_| Refuse::BadIntro)?;
     match msg.extract() {
@@ -674,6 +738,47 @@ mod tests {
         let mut junk = vec![0u8; unheld_blob::config::BUCKETS[0]];
         rand::RngCore::fill_bytes(&mut rand::rng(), &mut junk);
         assert_eq!(inspect(&Blob::from_bytes(junk).unwrap()).parts, vec![OutsidePart::Opaque]);
+    }
+
+    #[test]
+    fn forget_ends_sessions_and_wipe_erases() {
+        let a_dir = tmp("f-a");
+        let b_dir = tmp("f-b");
+        let mut alice = Core::create(&a_dir, "pw", "alice").unwrap();
+        let mut bob = Core::create(&b_dir, "pw", "bob").unwrap();
+        alice.import("bob", &bob.intro().unwrap()).unwrap();
+        alice.verify("bob", true).unwrap();
+        bob.import("alice", &alice.intro().unwrap()).unwrap();
+        bob.verify("alice", true).unwrap();
+        let blob = alice.seal("bob", b"x").unwrap();
+        bob.open(&blob).unwrap();
+        assert_eq!(alice.peer("bob").unwrap().sessions, 1);
+        // forget: the session is gone, the peer and its verification remain.
+        assert_eq!(alice.forget("bob").unwrap(), 1);
+        let p = alice.peer("bob").unwrap();
+        assert_eq!((p.sessions, p.state), (0, PeerState::Verified));
+        // Bob's next message to the old session cannot be opened by alice (L10).
+        let late = bob.seal("alice", b"late").unwrap();
+        assert!(matches!(alice.open(&late), Err(Refuse::UnknownSession)));
+        // wipe: nothing is left on disk.
+        wipe(&a_dir).unwrap();
+        assert!(!a_dir.join(config::vault::FILE_NAME).exists());
+        assert!(matches!(Core::unlock(&a_dir, "pw"), Err(Refuse::NoVault)));
+    }
+
+    #[test]
+    fn duress_passphrase_wipes_and_looks_like_a_wrong_one() {
+        let dir = tmp("duress");
+        let core = Core::create(&dir, "pw", "alice").unwrap();
+        assert!(matches!(core.set_duress("pw"), Err(Refuse::DuressSame)));
+        core.set_duress("help").unwrap();
+        // A wrong passphrase refuses and leaves the vault.
+        assert!(matches!(Core::unlock(&dir, "nope"), Err(Refuse::VaultLocked)));
+        assert!(dir.join(config::vault::FILE_NAME).exists());
+        // The duress passphrase refuses with the same words and the vault is gone.
+        assert!(matches!(Core::unlock(&dir, "help"), Err(Refuse::VaultLocked)));
+        assert!(!dir.join(config::vault::FILE_NAME).exists());
+        assert!(!dir.join(config::vault::DURESS_FILE_NAME).exists());
     }
 
     #[test]

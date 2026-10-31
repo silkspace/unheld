@@ -124,6 +124,37 @@ pub trait Carrier {
 }
 
 #[cfg(test)]
+mod properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// L1 and L4 over every payload length that fits: pad then unpad is the identity and the
+        /// blob is exactly a bucket.
+        #[test]
+        fn pad_unpad_identity(inner in proptest::collection::vec(any::<u8>(), 0..config::BUCKETS[config::BUCKETS.len() - 1] - config::LEN_PREFIX)) {
+            let b = Blob::pad(&inner).unwrap();
+            prop_assert!(config::BUCKETS.contains(&b.len()));
+            prop_assert_eq!(b.unpad().unwrap(), inner);
+            prop_assert_eq!(Blob::from_text(&b.to_text()).unwrap(), b);
+        }
+
+        /// L8: arbitrary bytes of bucket size never panic, and either unpad or refuse.
+        #[test]
+        fn arbitrary_bucket_never_panics(bytes in proptest::collection::vec(any::<u8>(), config::BUCKETS[0]..=config::BUCKETS[0])) {
+            let b = Blob::from_bytes(bytes).unwrap();
+            let _ = b.unpad();
+        }
+
+        /// L8: arbitrary text never panics in from_text.
+        #[test]
+        fn arbitrary_text_never_panics(s in ".*") {
+            let _ = Blob::from_text(&s);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

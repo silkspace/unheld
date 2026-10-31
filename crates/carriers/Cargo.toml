@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 unheld-blob = { path = "../blob" }
 thiserror.workspace = true
+arboard.workspace = true

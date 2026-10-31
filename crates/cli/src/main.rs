@@ -8,7 +8,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use unheld_blob::Carrier;
-use unheld_carriers::{FileCarrier, StdioCarrier};
+use unheld_carriers::{ClipboardCarrier, FileCarrier, StdioCarrier};
 use unheld_core::config;
 use unheld_core::vocab::Refuse;
 use unheld_core::{Core, Intro};
@@ -50,16 +50,22 @@ enum Cmd {
     /// Encrypt a message (from stdin) to a verified peer and hand the blob to a carrier.
     Send {
         name: String,
-        /// Carrier: `stdout` or `file:<path>`.
+        /// Carrier: `stdout`, `clipboard` or `file:<path>`.
         #[arg(short, long, default_value = "stdout")]
         carrier: String,
     },
     /// Take a blob from a carrier and decrypt it.
     Open {
-        /// Carrier: `stdin` or `file:<path>`.
+        /// Carrier: `stdin`, `clipboard` or `file:<path>`.
         #[arg(short, long, default_value = "stdin")]
         carrier: String,
     },
+    /// End every session with a peer and delete its keys; the peer stays verified.
+    Forget { name: String },
+    /// Set a duress passphrase: unlocking with it destroys the vault and answers as a wrong passphrase would.
+    Duress,
+    /// Destroy this profile's vault now.
+    Wipe,
     /// Read a blob the way a carrier would, with no vault and no key, and print what it learns.
     Inspect {
         /// Carrier: `stdin` or `file:<path>`.
@@ -193,7 +199,8 @@ fn carrier(spec: &str) -> Result<Box<dyn Carrier>, Refuse> {
     match spec.split_once(':') {
         Some(("file", path)) => Ok(Box::new(FileCarrier::new(path))),
         None if spec == "stdout" || spec == "stdin" => Ok(Box::new(StdioCarrier)),
-        _ => Err(Refuse::BadBlob),
+        None if spec == "clipboard" => Ok(Box::new(ClipboardCarrier)),
+        _ => Err(Refuse::CarrierIo),
     }
 }
 
@@ -305,6 +312,28 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                     println!("{} {}", style::name(&format!("{} ›", m.from)), String::from_utf8_lossy(&m.body));
                 }
             }
+        }
+        Cmd::Forget { name } => {
+            let mut core = Core::unlock(&dir, &passphrase(false)?)?;
+            let n = core.forget(&name)?;
+            println!("{} {} sessions with {} ended; keys deleted; {} stays {}", style::ok("✓"), n, style::name(&name), style::name(&name), style::state(core.peer(&name)?.state));
+        }
+        Cmd::Duress => {
+            let core = Core::unlock(&dir, &passphrase(false)?)?;
+            let d = rpassword::prompt_password("duress passphrase: ").map_err(|_| Refuse::VaultIo)?;
+            let again = rpassword::prompt_password("again: ").map_err(|_| Refuse::VaultIo)?;
+            if d != again {
+                return Err(Refuse::NotConfirmed);
+            }
+            core.set_duress(&d)?;
+            println!("{} duress passphrase set; unlocking with it destroys this vault and says only that it could not be opened", style::ok("✓"));
+        }
+        Cmd::Wipe => {
+            if !ask_yes("destroy this vault and every key in it? [yes/NO] ")? {
+                return Err(Refuse::NotConfirmed);
+            }
+            unheld_core::wipe(&dir)?;
+            println!("{} vault destroyed", style::ok("✓"));
         }
         Cmd::Inspect { carrier: spec } => {
             let blob = carrier(&spec)?.get().map_err(|e| match e {
