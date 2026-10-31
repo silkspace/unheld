@@ -6,7 +6,7 @@ cargo build --release -q
 U=./target/release/unheld
 export UNHELD_HOME="$(mktemp -d)" UNHELD_PASSPHRASE="${UNHELD_PASSPHRASE:-demo}"
 D="$UNHELD_HOME"
-say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+say() { printf '\n\033[1m%s\033[0m\n' "$*"; sleep "${UNHELD_DEMO_PAUSE:-0}"; }
 
 say "1. two identities, keys generated on device"
 $U --profile alice id new alice
