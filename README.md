@@ -107,7 +107,7 @@ the new device must show exactly phone
 
 From here `you` reads one person with two devices, both open what `you` sends, and what the phone sends arrives as `me ›`. `u --profile me id rotate -c file:/tmp/ring` makes new identity keys and writes one blob for the phone; the next message to `you` carries the old key's statement over the new one, `you` sees `me changed their key; verify again before sending to them` and cannot send until the sixty digits are compared again, and a new key that arrives without that statement is refused before anything moves. `u --profile me devices revoke phone -c dir:/tmp/rev` writes one commit per session, `you` opens it as `me removed 1 device`, and the phone opens its copy as `another device of yours revoked this one; those keys are deleted` and nothing after. A request that the witness cannot match to a screen is the 2025 linked-device attack, and it is what the default `no` is for. `u --profile me recover split 2 3` shows three shares one at a time and writes nothing, and `u --profile later recover join me` on a bare profile takes any two of them and rebuilds the identity, which `you` still trusts because the key is the same.
 
-Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte blob (type the message, Enter, then Ctrl-D), and `-c clipboard` puts it on the clipboard so you can paste it into any chat and `open -c clipboard` on the other side. Paste the file into a note or a chat to yourself: that is everything any carrier ever sees, and `u inspect -c file:/tmp/blob` shows exactly what. `u --profile you open -c file:/tmp/blob` reads it, a second open is refused as a replay, and one changed character is refused as malformed. `strings ~/.unheld/me/vault | grep -c hello` prints `0`, and the file has no header or magic bytes at all, so nothing identifies it as a vault. Every command needs `--profile`, because the profile is which of you is speaking. `rm -rf ~/.unheld/me ~/.unheld/you` deletes both identities completely, since nothing about them exists anywhere else.
+Then break it. `u --profile me send you -c file:/tmp/blob` writes a blob of one of four fixed sizes, 1024 bytes for a message and 4096 when it also carries the session's welcome (type the message, Enter, then Ctrl-D), and `-c clipboard` puts it on the clipboard so you can paste it into any chat and `open -c clipboard` on the other side. Paste the file into a note or a chat to yourself: that is everything any carrier ever sees, and `u inspect -c file:/tmp/blob` shows exactly what. `u --profile you open -c file:/tmp/blob` reads it, a second open is refused as a replay, and one changed character is refused the same way, since the client cannot tell the two apart and says so. `strings ~/.unheld/me/vault | grep -c hello` prints `0`, and the file has no header or magic bytes at all, so nothing identifies it as a vault. Every command needs `--profile`, because the profile is which of you is speaking. `rm -rf ~/.unheld/me ~/.unheld/you` deletes both identities completely, since nothing about them exists anywhere else.
 
 ## the laws
 
@@ -151,49 +151,49 @@ cargo test --workspace            # 26 tests: laws L1, L3, L4, L8, L10, L11, L14
 
 ```
 1. two identities, keys generated on device
-identity alice created; public prefix 35bb2660c7
-identity bob created; public prefix ac50e658a2
+✓ identity created  alice  64fa0a834b
+keys live in this vault and nowhere else
+✓ identity created  bob  bd3acd78b1
+keys live in this vault and nowhere else
 
 2. introductions exchanged out of band (here: files)
-bob staged as Pending; run `unheld verify bob`
-alice staged as Pending; run `unheld verify alice`
+✓ bob staged as Pending
+next: unheld verify bob   (compare the digits out loud)
+✓ alice staged as Pending
+next: unheld verify alice   (compare the digits out loud)
 
 3. sending before verification is refused (L3)
 refused: peer is not verified; run `verify` and compare the digits
 exit 2
 
 4. the pairwise number is the same on both sides
-refused: fingerprint not confirmed
-  69747 43550 11305 49452 90848 59417 32898 32037 74821 16992 72427 61762
-refused: fingerprint not confirmed
-  69747 43550 11305 49452 90848 59417 32898 32037 74821 16992 72427 61762
+  18409 24497 79404 36712 71496 40808 03322 43121 62138 48066 58903 65686
+  18409 24497 79404 36712 71496 40808 03322 43121 62138 48066 58903 65686
 
 5. both confirm by voice (here: yes on stdin)
-bob is Verified
-alice is Verified
+✓ bob is Verified
+✓ alice is Verified
 
 6. alice → bob through a file; the file holds a fixed-size blob
-blob: 1366 chars of base64url, 1024 raw bytes
-[session started by alice]
-alice: the carrier is a trait over bytes
-
+blob: 5462 chars of base64url, 4096 raw bytes
+· session started by alice
+alice › the carrier is a trait over bytes
 
 7. bob → alice through a pipe
-bob: and it cannot read this
-
+bob › and it cannot read this
 
 8. replay is refused (L11)
-refused: message was already opened, or arrived outside the tolerance window
+refused: could not open: already opened, outside the tolerance window, or altered in transit
 exit 2
 
-9. a flipped byte is refused (L8)
-refused: blob is malformed
+9. a flipped byte in a fresh blob is refused (L8)
+refused: could not open: already opened, outside the tolerance window, or altered in transit
 exit 2
 
 10. peers and the vault at rest
-bob              Verified  ac50e658a2  sessions 1  intro consumed
-alice            Verified  35bb2660c7  sessions 1  intro unused
-vault header: UNHELD01
+Verified bob              bd3acd78b1  sessions 1  intro consumed
+Verified alice            64fa0a834b  sessions 1  intro unused
+there is no header. first 8 bytes are the salt: 8ccfc8993f3fece6
 no plaintext in vault
 ```
 

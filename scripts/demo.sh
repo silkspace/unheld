@@ -53,6 +53,5 @@ $U --profile bob open -c "file:$D/blob4" || echo "exit $?"
 say "10. peers and the vault at rest"
 $U --profile alice peers
 $U --profile bob   peers
-echo "vault header: sk-20k23justkiddingmf'er"
-printf "              kidding. there is no header. first 8 bytes are the salt: "; head -c 8 "$D/alice/vault" | xxd -p
+printf "there is no header. first 8 bytes are the salt: "; head -c 8 "$D/alice/vault" | xxd -p
 grep -c alice "$D/alice/vault" >/dev/null && echo "plaintext found in vault" || echo "no plaintext in vault"
