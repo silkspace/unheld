@@ -102,6 +102,25 @@ fn passphrase(confirm: bool) -> Result<String, Refuse> {
     Ok(p)
 }
 
+/// Ask the human a yes-or-no question on the controlling terminal. Falls back to stdin
+/// when there is no terminal (tests and pipes). Anything but `yes` is no.
+fn ask_yes(prompt: &str) -> Result<bool, Refuse> {
+    let mut line = String::new();
+    if std::io::stdin().is_terminal() {
+        print!("{prompt}");
+        std::io::stdout().flush().map_err(|_| Refuse::VaultIo)?;
+        std::io::stdin().read_line(&mut line).map_err(|_| Refuse::VaultIo)?;
+    } else if let Ok(mut tty) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty") {
+        write!(tty, "{prompt}").map_err(|_| Refuse::VaultIo)?;
+        tty.flush().map_err(|_| Refuse::VaultIo)?;
+        let mut reader = std::io::BufReader::new(tty);
+        std::io::BufRead::read_line(&mut reader, &mut line).map_err(|_| Refuse::VaultIo)?;
+    } else {
+        line = String::from_utf8(read_stdin()?).unwrap_or_default();
+    }
+    Ok(line.trim() == "yes")
+}
+
 fn read_stdin() -> Result<Vec<u8>, Refuse> {
     let mut buf = Vec::new();
     std::io::stdin().read_to_end(&mut buf).map_err(|_| Refuse::VaultIo)?;
@@ -165,15 +184,7 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                 println!("{drawn}");
             }
             println!("read these aloud and listen to theirs:\n\n  {}\n", fp.spoken());
-            let confirmed = if std::io::stdin().is_terminal() {
-                print!("did every group match on both sides? [yes/NO] ");
-                std::io::stdout().flush().map_err(|_| Refuse::VaultIo)?;
-                let mut line = String::new();
-                std::io::stdin().read_line(&mut line).map_err(|_| Refuse::VaultIo)?;
-                line.trim() == "yes"
-            } else {
-                String::from_utf8(read_stdin()?).map(|s| s.trim() == "yes").unwrap_or(false)
-            };
+            let confirmed = ask_yes("did every group match on both sides? [yes/NO] ")?;
             let peer = core.verify(&name, confirmed)?;
             println!("{} is {:?}", peer.name, peer.state);
         }
