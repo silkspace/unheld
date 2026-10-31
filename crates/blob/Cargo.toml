@@ -1,0 +1,11 @@
+[package]
+name = "unheld-blob"
+description = "The adversary's objects: Blob, its buckets, and the Carrier trait that names nothing else."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+base64.workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "unheld"
+description = "The command-line client."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "unheld"
+path = "src/main.rs"
+
+[dependencies]
+unheld-blob = { path = "../blob" }
+unheld-core = { path = "../core" }
+unheld-carriers = { path = "../carriers" }
+clap.workspace = true
+rpassword.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

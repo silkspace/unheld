@@ -1,0 +1,10 @@
+[package]
+name = "unheld-carriers"
+description = "Carriers move blobs. This crate depends on unheld-blob and on nothing that can name a key."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+unheld-blob = { path = "../blob" }
+thiserror.workspace = true

@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["crates/blob", "crates/core", "crates/carriers", "crates/cli"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "AGPL-3.0-only"
+repository = "https://github.com/silkspace/unheld"
+
+[workspace.dependencies]
+openmls = { version = "0.9", default-features = false }
+openmls_rust_crypto = "0.6"
+openmls_basic_credential = "0.6"
+openmls_memory_storage = { version = "0.6", features = ["persistence"] }
+openmls_traits = "0.5"
+tls_codec = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+zeroize = { version = "1", features = ["derive"] }
+argon2 = "0.6"
+chacha20poly1305 = "0.11"
+blake3 = "1"
+base64 = "0.23"
+rand = "0.9"
+clap = { version = "4", features = ["derive"] }
+rpassword = "7"

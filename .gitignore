@@ -1,0 +1,27 @@
+# Rust
+/target/
+**/target/
+Cargo.lock.bak
+
+# Python tooling under UV
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Formal model outputs
+*.spthy.out
+tamarin-output/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Nothing below should ever exist in a working tree; listed so a mistake does not reach git
+*.key
+*.pem
+*.share
+vault*/

@@ -1,0 +1,54 @@
+#![forbid(unsafe_code)]
+//! Carriers move blobs. This crate depends on `unheld-blob` and on nothing that can name a key.
+
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use unheld_blob::{Blob, Carrier, CarrierError};
+
+/// A file holding one blob as text. Put overwrites, get reads.
+pub struct FileCarrier {
+    path: PathBuf,
+}
+
+impl FileCarrier {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+impl Carrier for FileCarrier {
+    fn put(&mut self, blob: &Blob) -> Result<(), CarrierError> {
+        let mut text = blob.to_text();
+        text.push('\n');
+        std::fs::write(&self.path, text)?;
+        Ok(())
+    }
+
+    fn get(&mut self) -> Result<Blob, CarrierError> {
+        let text = std::fs::read_to_string(&self.path)?;
+        if text.trim().is_empty() {
+            return Err(CarrierError::Empty);
+        }
+        Ok(Blob::from_text(&text)?)
+    }
+}
+
+/// Standard output for put, standard input for get, so blobs flow through pipes.
+pub struct StdioCarrier;
+
+impl Carrier for StdioCarrier {
+    fn put(&mut self, blob: &Blob) -> Result<(), CarrierError> {
+        let mut out = std::io::stdout().lock();
+        writeln!(out, "{}", blob.to_text())?;
+        Ok(())
+    }
+
+    fn get(&mut self) -> Result<Blob, CarrierError> {
+        let mut text = String::new();
+        std::io::stdin().lock().read_to_string(&mut text)?;
+        if text.trim().is_empty() {
+            return Err(CarrierError::Empty);
+        }
+        Ok(Blob::from_text(&text)?)
+    }
+}
