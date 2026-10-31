@@ -8,6 +8,8 @@ Blob    = [u8; B], B ∈ Buckets                      -- fixed sizes. no header.
 Peer    = built by verify alone                      -- no constructor, no session, no message.
 ```
 
+![two vaults, one file carrier, every refusal shown live](docs/demo.gif)
+
 That first line is the whole threat model. Correctness is a square that commutes for the two parties; security is the same square failing to commute, totally, for every morphism an adversary can insert. Your relay, your mail provider, the app you pasted into, a court, a mole, and us: everyone downstream of `seal` is a function from `Blob` to `()`. The crate that implements carriers is forbidden by `cargo deny` from importing a key type. Not a promise. A build failure.
 
 ## the parts that bite
