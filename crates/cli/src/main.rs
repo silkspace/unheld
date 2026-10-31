@@ -60,6 +60,12 @@ enum Cmd {
         #[arg(short, long, default_value = "stdin")]
         carrier: String,
     },
+    /// Read a blob the way a carrier would, with no vault and no key, and print what it learns.
+    Inspect {
+        /// Carrier: `stdin` or `file:<path>`.
+        #[arg(short, long, default_value = "stdin")]
+        carrier: String,
+    },
     /// This build and what is known about it.
     About,
 }
@@ -298,6 +304,32 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                 } else {
                     println!("{} {}", style::name(&format!("{} ›", m.from)), String::from_utf8_lossy(&m.body));
                 }
+            }
+        }
+        Cmd::Inspect { carrier: spec } => {
+            let blob = carrier(&spec)?.get().map_err(|e| match e {
+                unheld_blob::CarrierError::Empty => Refuse::NothingToOpen,
+                unheld_blob::CarrierError::Io(_) => Refuse::CarrierIo,
+                unheld_blob::CarrierError::Blob(_) => Refuse::BadBlob,
+            })?;
+            let outside = unheld_core::inspect(&blob);
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&outside).map_err(|_| Refuse::Protocol)?);
+            } else {
+                println!("{} {}", style::head("an outsider holding this blob can read:"), style::dim(&format!("bucket {} bytes", outside.bucket)));
+                for p in &outside.parts {
+                    match p {
+                        unheld_core::OutsidePart::Message { wire_format, group_id_prefix, epoch, content_type } => {
+                            println!("  {} {wire_format}  session {}  epoch {epoch}  {content_type}", style::warn("MLS message"), style::hash(group_id_prefix));
+                        }
+                        unheld_core::OutsidePart::Welcome { ciphersuite, recipients } => {
+                            println!("  {} {ciphersuite}  recipients {recipients}", style::warn("MLS welcome"));
+                        }
+                        unheld_core::OutsidePart::Introduction => println!("  {}", style::warn("an introduction (public by design)")),
+                        unheld_core::OutsidePart::Opaque => println!("  {}", style::ok("nothing: opaque bytes")),
+                    }
+                }
+                println!("{}", style::dim("and never: who sent it, to whom, or what it says (docs/decisions/002-carrier-view.md)"));
             }
         }
         Cmd::About => {

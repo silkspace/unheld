@@ -21,6 +21,7 @@ The first client is a terminal program because two people with laptops are the m
 | `unheld devices list \| enroll \| revoke` | `enroll` | L15 | Phase 5. Enrolment shows the new device's fingerprint here and waits for yes. |
 | `unheld group new \| add \| remove \| roster` | `start`, `add`, `remove` | L16, L17, L19 | Phase 5. Refuses a large group over an unordered carrier and says which carriers would do. |
 | `unheld recover split \| join` | `split` | L21 | Phase 5. The interactive ceremony; shares shown once and never written. |
+| `unheld inspect [-c stdin \| file:<path>]` | | L7 | Reads a blob with no vault and no key and prints everything a carrier could learn from it, so the metadata surface is measured rather than assumed. |
 | `unheld about` | `install` | L22, L23, L24 | This version, its log entry, the builders who reproduced it, the signers and their jurisdictions, and the command to check it yourself. |
 | `unheld mcp` | | | Runs the Model Context Protocol server over stdio (docs/MCP.md). |
 

@@ -19,6 +19,12 @@ pub mod vault {
     pub const HOME_DIR_NAME: &str = ".unheld";
 }
 
+/// Identity.
+pub mod identity {
+    /// Random bytes standing for an identity inside credentials, so introductions carry no name.
+    pub const CREDENTIAL_ID_LEN: usize = 16;
+}
+
 /// Fingerprint display.
 pub mod fp {
     /// Digits in the pairwise safety number.

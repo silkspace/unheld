@@ -34,7 +34,11 @@ struct State {
 
 #[derive(Serialize, Deserialize, Clone)]
 struct IdentityRecord {
+    /// The local name. Never leaves the vault.
     name: String,
+    /// Random bytes that stand for this identity inside credentials, so an introduction
+    /// carries no name.
+    credential_id: Vec<u8>,
     signature_public: Vec<u8>,
 }
 
@@ -122,10 +126,13 @@ impl Core {
         let signer = SignatureKeyPair::new(config::mls::CIPHERSUITE.signature_algorithm())
             .map_err(mls_err)?;
         signer.store(provider.storage()).map_err(mls_err)?;
+        let mut credential_id = vec![0u8; config::identity::CREDENTIAL_ID_LEN];
+        rand::RngCore::fill_bytes(&mut rand::rng(), &mut credential_id);
         let state = State {
             version: config::vault::FORMAT_VERSION,
             identity: Some(IdentityRecord {
                 name: name.to_owned(),
+                credential_id,
                 signature_public: signer.to_public_vec(),
             }),
             ..State::default()
@@ -189,7 +196,7 @@ impl Core {
     fn credential_with_key(&self) -> Result<CredentialWithKey, Refuse> {
         let id = self.identity()?;
         Ok(CredentialWithKey {
-            credential: BasicCredential::new(id.name.as_bytes().to_vec()).into(),
+            credential: BasicCredential::new(id.credential_id.clone()).into(),
             signature_key: id.signature_public.clone().into(),
         })
     }
@@ -437,6 +444,64 @@ impl Core {
     }
 }
 
+/// What an outsider can read from one part of a blob without any key.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub enum OutsidePart {
+    /// An MLS message: its session id prefix, epoch and content type are in the clear.
+    Message { wire_format: String, group_id_prefix: String, epoch: u64, content_type: String },
+    /// A welcome: the ciphersuite and the number of recipients are in the clear.
+    Welcome { ciphersuite: String, recipients: usize },
+    /// An introduction (a key package), which is public by design.
+    Introduction,
+    /// Bytes that parse as none of the above.
+    Opaque,
+}
+
+/// Everything an outsider can read from a blob. Measured, not assumed (TRACE.md, L7).
+#[derive(Debug, Clone, Serialize)]
+pub struct Outside {
+    pub bucket: usize,
+    pub parts: Vec<OutsidePart>,
+}
+
+/// Read a blob the way a carrier would: no vault, no key.
+pub fn inspect(blob: &Blob) -> Outside {
+    let bucket = blob.len();
+    let parts = match blob.unpad().ok().and_then(|inner| unframe(&inner).ok()) {
+        None => vec![OutsidePart::Opaque],
+        Some(parts) => parts
+            .iter()
+            .map(|p| match MlsMessageIn::tls_deserialize_exact(p) {
+                Err(_) => OutsidePart::Opaque,
+                Ok(m) => {
+                    let wire_format = format!("{:?}", m.wire_format());
+                    match m.extract() {
+                        MlsMessageBodyIn::PrivateMessage(pm) => OutsidePart::Message {
+                            wire_format,
+                            group_id_prefix: prefix(pm.group_id().as_slice()),
+                            epoch: pm.epoch().as_u64(),
+                            content_type: format!("{:?}", pm.content_type()),
+                        },
+                        MlsMessageBodyIn::PublicMessage(pm) => OutsidePart::Message {
+                            wire_format,
+                            group_id_prefix: prefix(pm.group_id().as_slice()),
+                            epoch: pm.epoch().as_u64(),
+                            content_type: format!("{:?}", pm.content_type()),
+                        },
+                        MlsMessageBodyIn::Welcome(w) => OutsidePart::Welcome {
+                            ciphersuite: format!("{:?}", w.ciphersuite()),
+                            recipients: w.secrets().len(),
+                        },
+                        MlsMessageBodyIn::KeyPackage(_) => OutsidePart::Introduction,
+                        _ => OutsidePart::Opaque,
+                    }
+                }
+            })
+            .collect(),
+    };
+    Outside { bucket, parts }
+}
+
 fn parse_key_package(provider: &OpenMlsRustCrypto, bytes: &[u8]) -> Result<KeyPackage, Refuse> {
     let msg = MlsMessageIn::tls_deserialize_exact(bytes).map_err(|_| Refuse::BadIntro)?;
     match msg.extract() {
@@ -557,6 +622,58 @@ mod tests {
         let v2 = std::fs::read(a_dir.join(config::vault::FILE_NAME)).unwrap();
         assert_ne!(&v1[..config::vault::SALT_LEN], &v2[..config::vault::SALT_LEN]);
         assert!(!v1.windows(6).any(|w| w == b"UNHELD" || w == b"alice\""));
+    }
+
+    #[test]
+    fn changed_key_blocks_until_verified_again() {
+        let a_dir = tmp("a14");
+        let b_dir = tmp("b14");
+        let b2_dir = tmp("b14-newphone");
+        let mut alice = Core::create(&a_dir, "pw", "alice").unwrap();
+        let mut bob = Core::create(&b_dir, "pw", "bob").unwrap();
+        let mut bob_new = Core::create(&b2_dir, "pw", "bob").unwrap();
+        alice.import("bob", &bob.intro().unwrap()).unwrap();
+        alice.verify("bob", true).unwrap();
+        assert_eq!(alice.peer("bob").unwrap().state, PeerState::Verified);
+        // A new introduction under the same name with a different key demotes the peer (L14).
+        let p = alice.import("bob", &bob_new.intro().unwrap()).unwrap();
+        assert_eq!(p.state, PeerState::Changed);
+        assert!(matches!(alice.seal("bob", b"hi"), Err(Refuse::Changed)));
+        // Only a fresh comparison restores sending.
+        alice.verify("bob", true).unwrap();
+        assert!(alice.seal("bob", b"hi").is_ok());
+    }
+
+    #[test]
+    fn introduction_carries_no_name() {
+        let dir = tmp("nameless");
+        let mut core = Core::create(&dir, "pw", "a-very-distinctive-name").unwrap();
+        let intro = core.intro().unwrap();
+        assert!(!intro.0.windows(23).any(|w| w == b"a-very-distinctive-name"));
+    }
+
+    #[test]
+    fn what_an_outsider_can_read_is_exactly_this() {
+        let a_dir = tmp("out-a");
+        let b_dir = tmp("out-b");
+        let mut alice = Core::create(&a_dir, "pw", "alice").unwrap();
+        let mut bob = Core::create(&b_dir, "pw", "bob").unwrap();
+        alice.import("bob", &bob.intro().unwrap()).unwrap();
+        alice.verify("bob", true).unwrap();
+        let first = alice.seal("bob", b"one").unwrap();
+        let second = alice.seal("bob", b"two").unwrap();
+        let o1 = inspect(&first);
+        let o2 = inspect(&second);
+        // The first blob shows a welcome for one recipient and an application message.
+        assert!(matches!(o1.parts[0], OutsidePart::Welcome { recipients: 1, .. }));
+        assert!(matches!(&o1.parts[1], OutsidePart::Message { content_type, .. } if content_type == "Application"));
+        // Both blobs expose the same session id prefix: the linkage recorded in decision 002.
+        let gid = |p: &OutsidePart| match p { OutsidePart::Message { group_id_prefix, .. } => group_id_prefix.clone(), _ => String::new() };
+        assert_eq!(gid(&o1.parts[1]), gid(&o2.parts[0]));
+        // Random bytes of bucket size read as opaque.
+        let mut junk = vec![0u8; unheld_blob::config::BUCKETS[0]];
+        rand::RngCore::fill_bytes(&mut rand::rng(), &mut junk);
+        assert_eq!(inspect(&Blob::from_bytes(junk).unwrap()).parts, vec![OutsidePart::Opaque]);
     }
 
     #[test]

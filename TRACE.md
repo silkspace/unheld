@@ -62,6 +62,7 @@ Phase 4 adds the share-sheet carrier and one mobile shell with the same criteria
 
 ## Known gaps, stated
 
+- **MLS framing is readable by the carrier.** Session identifier, epoch and content type of every message, and the ciphersuite and recipient count of a welcome, are in the clear inside the padding. Accepted for the overlay in `docs/decisions/002-carrier-view.md`, measured by `unheld inspect`, pinned by a test, and reopened with the relay queue design.
 - **Groups without a server.** L19 is a refusal, not a solution; large groups need an ordered carrier, and the only ordered carrier planned is the relay queue in Phase 5. A consensus among members over an unordered carrier is possible and is not designed.
 - **iOS.** L23 cannot be checked by the user on iOS because Apple re-signs the binary. The about screen says so.
 - **Endpoint hygiene.** Keyboard dictionaries, app-switcher snapshots, backup exclusion and clipboard clearing are a checklist in the shells with a test where the platform allows one, which is not everywhere.
