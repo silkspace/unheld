@@ -16,11 +16,15 @@ The first client is a terminal program because two people with laptops are the m
 | `unheld send <peer> [-c clipboard \| file \| stdout]` | `seal` | L4, L8, L14 | Reads the message from stdin or the editor, seals it, pads it to a bucket, and hands the blob to the chosen carrier. Refused for `Pending` or `Changed`. |
 | `unheld open [-c clipboard \| file \| stdin]` | `open` | L11, L12, L13 | Takes a blob from the carrier, trial-decrypts across sessions, shows the message with its sender, and marks any gap in the sequence. A replayed or reflected blob is refused and counted. |
 | `unheld log <peer> [--start N]` | | | Paged history with `total` and `next_start`; never truncated. |
-| `unheld forget <peer>` | `forget` | L10 | Ends every session with the peer and deletes its keys; the peer stays verified and the next message starts a fresh session from a fresh introduction. The client stores no message history, so there is nothing else to forget. |
+| `unheld forget <peer \| group>` | `forget` | L10 | Ends every session with the peer and deletes its keys; the peer stays verified and the next message starts a fresh session from a fresh introduction. For a group it deletes the local keys and leaves; the others list you until the admin removes you. The client stores no message history, so there is nothing else to forget. |
 | `unheld duress` | | L10 | Sets a duress passphrase. Unlocking with it destroys the vault and answers exactly as a wrong passphrase would. |
 | `unheld wipe` | `wipe` | L10 | Overwrites and removes the vault after a yes. |
 | `unheld devices list \| enroll \| revoke` | `enroll` | L15 | Phase 5. Enrolment shows the new device's fingerprint here and waits for yes. |
-| `unheld group new \| add \| remove \| roster` | `start`, `add`, `remove` | L16, L17, L19 | Phase 5. Refuses a large group over an unordered carrier and says which carriers would do. |
+| `unheld group new <name> <peer> <peer>... [-c]` | `start` | L16, L19 | Starts a group of verified peers with you as admin and writes the welcome every newcomer opens. Two people is a session, not a group. Above the small bound over an unordered carrier it refuses and says what the bound is. |
+| `unheld group add <group> <peer> [-c] [-w]` | `add` | L16, L17, L19 | Admin only. Writes the commit for the members to `-c` and the welcome for the newcomer to `-w`; the newcomer opens nothing sealed before. |
+| `unheld group remove <group> <member> [-c]` | `remove` | L16, L17 | Admin only. Writes the commit; the removed member opens nothing sealed after, and their client says who removed them. |
+| `unheld group send <group> [-c]` | `seal` | L4, L8, L18 | Seals one blob every member opens, and first prints every reader with their state, so a vouched stranger is seen every time. |
+| `unheld group roster <group>`, `group list` | | L18 | Every member as `Verified`, `Pending`, `Changed` or `Vouched` with the admin's name, and who the admin is. A joiner's group is named `g-` and the session hash until `group rename`. |
 | `unheld recover split \| join` | `split` | L21 | Phase 5. The interactive ceremony; shares shown once and never written. |
 | `unheld inspect [-c stdin \| file:<path>]` | | L7 | Reads a blob with no vault and no key and prints everything a carrier could learn from it, so the metadata surface is measured rather than assumed. |
 | `unheld about` | `install` | L22, L23, L24 | This version, its log entry, the builders who reproduced it, the signers and their jurisdictions, and the command to check it yourself. |
@@ -28,7 +32,7 @@ The first client is a terminal program because two people with laptops are the m
 
 ## Carriers in the first release
 
-`clipboard` puts the blob on the system clipboard or reads it from there, which is how a blob reaches a chat or a mail client; `file` writes or reads a path; `stdout` and `stdin` let the blob flow through pipes into any program. A blob is text-safe (base64url) so it survives every chat app and mail client we have met. The `relay` carrier arrives with Phase 5 and is the only ordered one.
+`clipboard` puts the blob on the system clipboard or reads it from there, which is how a blob reaches a chat or a mail client; `file` writes or reads a path; `stdout` and `stdin` let the blob flow through pipes into any program. A blob is text-safe (base64url) so it survives every chat app and mail client we have met. None of these deliver in order, so a group above `config::group::SMALL` members is refused on all of them (L19); the `relay` carrier arrives with Phase 5 and is the only ordered one. A roster change in a group is a commit, and `open` prints it as a line every member sees: who added or removed whom, or that you were removed and the keys are gone (L16). How roster rights work and what a joiner does and does not know is `docs/decisions/003-groups.md`.
 
 ## What is deliberately absent
 

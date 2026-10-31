@@ -58,6 +58,8 @@ echo "hello" | u --profile me send you | u --profile you open
 me › hello
 ```
 
+Three or more is a group: `u --profile me group new team you them -c file:/tmp/w` hands a welcome to verified peers, `group send` seals one blob for all of them and names every reader with their state first, and `open` prints every roster change as a line, so nobody is ever added quietly. Only the one who started the group changes its roster; every other client refuses a roster change from anyone else, and `group roster` shows who you verified yourself and who the admin merely vouched for. Above eight people the file, clipboard and pipe carriers are refused because they cannot order commits, which is the whole reason large groups usually need a server.
+
 Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte blob (type the message, Enter, then Ctrl-D), and `-c clipboard` puts it on the clipboard so you can paste it into any chat and `open -c clipboard` on the other side. Paste the file into a note or a chat to yourself: that is everything any carrier ever sees, and `u inspect -c file:/tmp/blob` shows exactly what. `u --profile you open -c file:/tmp/blob` reads it, a second open is refused as a replay, and one changed character is refused as malformed. `strings ~/.unheld/me/vault | grep -c hello` prints `0`, and the file has no header or magic bytes at all, so nothing identifies it as a vault. Every command needs `--profile`, because the profile is which of you is speaking. `rm -rf ~/.unheld/me ~/.unheld/you` deletes both identities completely, since nothing about them exists anywhere else.
 
 ## the laws
@@ -135,7 +137,7 @@ no plaintext in vault
 
 </details>
 
-Not yet: Tamarin model, property tests per law, groups above two, devices, rotation, recovery, reproducible builds, the log. See TRACE.md for which rows are green.
+Not yet: Tamarin model, property tests per law, the ordered relay for large groups, devices, rotation, recovery, reproducible builds, the log. See TRACE.md for which rows are green.
 
 Primitives are never written here. Ratchet: [OpenMLS](https://github.com/openmls/openmls). Tor: [Arti](https://gitlab.torproject.org/tpo/core/arti). Everything else: RustCrypto, pinned, `cargo vet`'d. We hand-roll the architecture and not one byte of crypto. See [`docs/decisions/001`](docs/decisions/001-ratchet-and-licence.md) for why not libsignal (licence, not safety).
 

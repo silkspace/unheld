@@ -34,10 +34,10 @@ Every law has a phase, a test, a review layer and a screen, and this file is whe
 | L13 bounded state | 3 | flooding carrier; Kani on the skipped-key cap | R4 | none |
 | L14 key change blocks | 3 | compiler on `Changed`; Tamarin; test that `seal` refuses | R2, R3, R4 | contact turns red with "key changed, verify again"; send disabled |
 | L15 enrolment needs witness | 5 | compiler on `Confirm`; Tamarin | R2, R3 | devices list; new device shows its fingerprint on an existing device and waits |
-| L16 no ghost | 5 | Tamarin on the policy layer; test that an unsigned or unauthorised commit is refused | R2, R4, R7 | roster view with a change feed every member sees: who added whom, when |
-| L17 membership secrecy | 5 | cited MLS proof; test that a removed member cannot open the next epoch | R7 | roster view |
-| L18 vouch is not verify | 5 | compiler on `state`; interface test | R3 | member badge: Verified, Changed, or "vouched for by Alice" |
-| L19 ordered or small | 5 | test that `start` refuses a large roster over an unordered carrier | R4 | group creation says which carriers can hold a group this size |
+| L16 no ghost | 1 (POC) | Tamarin on the policy layer; `a_roster_change_from_a_non_admin_is_refused_by_every_member` (a client altered to believe it is admin adds a member; every other client refuses the commit and its epoch does not move) | R2, R4, R7 | `open` prints every roster change: who added or removed whom |
+| L17 membership secrecy | 1 (POC) | cited MLS proof; `a_group_of_three_and_its_laws` (a newcomer opens nothing sealed before joining, a removed member opens nothing sealed after) | R7 | `group roster` |
+| L18 vouch is not verify | 1 (POC) | compiler on `MemberTrust`; `a_group_of_three_and_its_laws` (a member you never verified is `Vouched` with the admin's name, and `group send` lists every reader with their state) | R3 | member badge: Verified, Pending, Changed, or Vouched for by the admin |
+| L19 ordered or small | 1 (POC) | `a_large_group_needs_an_ordered_carrier` (one above the bound over an unordered carrier is refused before any key is touched) | R4 | the refusal names the bound and the carriers that do not order |
 | L20 explicit entropy | 3 | health-test failure makes `gen` and `seal` refuse | R4 | none; first run reports entropy source |
 | L21 shares by ceremony | 5 | compiler; test that `lock` never writes a `Share` | R3, R4 | recovery ceremony screen, interactive, with the shares shown once |
 | L22 no creator input | 2 | grep test for network calls outside `Carrier`; no update prompt exists | R3, R6 | about screen: "this version runs forever; updates are offered, never required" |
@@ -46,7 +46,7 @@ Every law has a phase, a test, a review layer and a screen, and this file is whe
 
 ## Proof of concept, what is green
 
-The workspace under `crates/` delivers criterion 1 in scripted form (intro files, a 60-digit pairwise number that agrees on both sides, send refused until confirmed), criterion 2 with file, stdio and clipboard carriers, tests for L1, L3, L4, L8, L10, L11 and L14, and property tests over the blob parser, and the crate-graph half of L2 as a test. Criterion 3 is covered for first contact (a welcome from an unverified sender is refused and its group deleted); the key-change half (L14) has the `Changed` state and no test yet. Criteria 4 and 5 are not started.
+The workspace under `crates/` delivers criterion 1 in scripted form (intro files, a 60-digit pairwise number that agrees on both sides, send refused until confirmed), criterion 2 with file, stdio and clipboard carriers, tests for L1, L3, L4, L8, L10, L11 and L14, property tests over the blob parser, the crate-graph half of L2 as a test, and groups above two with one admin, tests for L16 to L19 and the roster change feed (`docs/decisions/003-groups.md`). Criterion 3 is covered for first contact (a welcome from an unverified sender is refused and its group deleted); the key-change half (L14) has the `Changed` state and no test yet. Criteria 4 and 5 are not started.
 
 ## The MVP, as acceptance criteria
 
@@ -58,12 +58,13 @@ The minimum viable product is two people talking with no server, and it is accep
 4. The binary is reproduced on a second machine from the tag and the hashes match (L23, in its two-builder form).
 5. The first-run screen names what the system does not protect and the about screen names the log entry.
 
-Phase 4 adds the share-sheet carrier and one mobile shell with the same criteria re-run; Phase 5 adds groups, devices and recovery with L15 to L19 and L21.
+Phase 4 adds the share-sheet carrier and one mobile shell with the same criteria re-run; Phase 5 adds the ordered relay for large groups, devices and recovery with L15 and L21.
 
 ## Known gaps, stated
 
 - **MLS framing is readable by the carrier.** Session identifier, epoch and content type of every message, and the ciphersuite and recipient count of a welcome, are in the clear inside the padding. Accepted for the overlay in `docs/decisions/002-carrier-view.md`, measured by `unheld inspect`, pinned by a test, and reopened with the relay queue design.
-- **Groups without a server.** L19 is a refusal, not a solution; large groups need an ordered carrier, and the only ordered carrier planned is the relay queue in Phase 5. A consensus among members over an unordered carrier is possible and is not designed.
+- **Groups without a server.** L19 is a refusal, not a solution; large groups need an ordered carrier, and the only ordered carrier planned is the relay queue in Phase 5. Below the bound, two roster changes by the one admin that cross in transit still fork the group, and the fork shows as a refusal on one side with no automatic repair. A consensus among members over an unordered carrier is possible and is not designed.
+- **One admin per group.** Roster rights are held by the creator alone, so a group outlives its admin only by being started again. Members leave by deleting their own keys and stay in the others' roster until the admin removes them. Self-updates for post-compromise security are accepted from any member and are not yet sent.
 - **iOS.** L23 cannot be checked by the user on iOS because Apple re-signs the binary. The about screen says so.
 - **Endpoint hygiene.** Keyboard dictionaries, app-switcher snapshots, backup exclusion and clipboard clearing are a checklist in the shells with a test where the platform allows one, which is not everywhere.
 - **L7 proof.** Observational equivalence in Tamarin is tractable for small models; the full unlinkability claim will rest partly on a statistical test and an audit.

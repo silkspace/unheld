@@ -48,6 +48,18 @@ pub mod mls {
     pub const MAX_FORWARD_DISTANCE: u32 = 1000;
 }
 
+/// Groups above two.
+pub mod group {
+    /// Members, counting yourself, above which the carrier must deliver in order (L19).
+    pub const SMALL: usize = 8;
+    /// Members, counting yourself, below which a roster is a pairwise session, not a group.
+    pub const MIN_MEMBERS: usize = 3;
+    /// Prefix of the local name a joiner gives a group it was welcomed into.
+    pub const JOINED_NAME_PREFIX: &str = "g-";
+    /// Prefix shown before the key hash of a member nobody here has verified (L18).
+    pub const UNVERIFIED_PREFIX: &str = "?";
+}
+
 /// Framing of several MLS messages inside one blob.
 pub mod frame {
     pub const COUNT_LEN: usize = 1;

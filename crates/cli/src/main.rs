@@ -3,7 +3,7 @@
 
 use clap::{Parser, Subcommand};
 use owo_colors::{OwoColorize, Stream};
-use unheld_core::vocab::PeerState;
+use unheld_core::vocab::{MemberTrust, PeerState};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -60,7 +60,12 @@ enum Cmd {
         #[arg(short, long, default_value = "stdin")]
         carrier: String,
     },
-    /// End every session with a peer and delete its keys; the peer stays verified.
+    /// Groups above two: start one, add, remove, send, and see every member's state.
+    Group {
+        #[command(subcommand)]
+        cmd: GroupCmd,
+    },
+    /// End every session with a peer, or leave a group, and delete the keys; a peer stays verified.
     Forget { name: String },
     /// Set a duress passphrase: unlocking with it destroys the vault and answers as a wrong passphrase would.
     Duress,
@@ -80,6 +85,49 @@ enum Cmd {
 enum IdCmd {
     New { name: String },
     Show,
+}
+
+#[derive(Subcommand)]
+enum GroupCmd {
+    /// Start a group with verified peers; you become its admin. The welcome goes to every peer named.
+    New {
+        name: String,
+        #[arg(required = true, num_args = 2..)]
+        peers: Vec<String>,
+        /// Carrier for the welcome: `stdout`, `clipboard` or `file:<path>`.
+        #[arg(short, long, default_value = "stdout")]
+        carrier: String,
+    },
+    /// Admit a verified peer. The commit goes to the members, the welcome to the newcomer.
+    Add {
+        group: String,
+        peer: String,
+        /// Carrier for the commit the members open.
+        #[arg(short, long, default_value = "stdout")]
+        carrier: String,
+        /// Carrier for the welcome the newcomer opens.
+        #[arg(short, long, default_value = "stdout")]
+        welcome: String,
+    },
+    /// Remove a member by the label `roster` shows. The commit goes to the members.
+    Remove {
+        group: String,
+        member: String,
+        #[arg(short, long, default_value = "stdout")]
+        carrier: String,
+    },
+    /// Encrypt a message (from stdin) to every member and hand the blob to a carrier.
+    Send {
+        group: String,
+        #[arg(short, long, default_value = "stdout")]
+        carrier: String,
+    },
+    /// Every member with its verification state and who the admin is.
+    Roster { group: String },
+    /// Every group this vault is in.
+    List,
+    /// Give a group a different local name; names never leave the vault.
+    Rename { group: String, new_name: String },
 }
 
 #[derive(Subcommand)]
@@ -122,6 +170,14 @@ mod style {
     }
     pub fn hash(t: &str) -> String {
         paint(t, Stream::Stdout, Style::new().magenta())
+    }
+    pub fn trust(t: MemberTrust) -> String {
+        match t {
+            MemberTrust::Verified => ok("Verified"),
+            MemberTrust::Pending => warn("Pending "),
+            MemberTrust::Changed => paint("Changed ", Stream::Stdout, Style::new().red().bold()),
+            MemberTrust::Vouched => warn("Vouched "),
+        }
     }
     pub fn state(st: PeerState) -> String {
         match st {
@@ -306,18 +362,30 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             })?;
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
             for m in core.open(&blob)? {
-                if m.session_started {
+                if let Some(change) = &m.change {
+                    eprintln!("{} {}", style::warn("·"), change);
+                } else if m.session_started {
                     eprintln!("{}", style::dim(&format!("· session started by {}", m.from)));
                 } else {
-                    println!("{} {}", style::name(&format!("{} ›", m.from)), String::from_utf8_lossy(&m.body));
+                    let who = match (&m.group, &m.vouched_by) {
+                        (Some(g), Some(v)) => format!("{} {} {}", style::dim(&format!("[{g}]")), style::warn(&m.from), style::dim(&format!("(vouched by {v}) ›"))),
+                        (Some(g), None) => format!("{} {}", style::dim(&format!("[{g}]")), style::name(&format!("{} ›", m.from))),
+                        _ => style::name(&format!("{} ›", m.from)),
+                    };
+                    let text = String::from_utf8_lossy(&m.body);
+                    println!("{who} {}", text.strip_suffix('\n').unwrap_or(&text));
                 }
             }
         }
         Cmd::Forget { name } => {
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
             let n = core.forget(&name)?;
-            println!("{} {} sessions with {} ended; keys deleted; {} stays {}", style::ok("✓"), n, style::name(&name), style::name(&name), style::state(core.peer(&name)?.state));
+            match core.peer(&name) {
+                Ok(p) => println!("{} {} sessions with {} ended; keys deleted; {} stays {}", style::ok("✓"), n, style::name(&name), style::name(&name), style::state(p.state)),
+                Err(_) => println!("{} left {}; its keys are deleted. the others still list you until the admin removes you", style::ok("✓"), style::name(&name)),
+            }
         }
+        Cmd::Group { cmd } => group_cmd(cmd, &dir, cli.json)?,
         Cmd::Duress => {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
             let d = rpassword::prompt_password("duress passphrase: ").map_err(|_| Refuse::VaultIo)?;
@@ -365,6 +433,110 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             println!("{} {}  {}", style::head("unheld"), env!("CARGO_PKG_VERSION"), style::dim("proof of concept; unsigned, unlogged, unaudited"));
             println!("{} OpenMLS, {:?}", style::dim("ratchet "), config::mls::CIPHERSUITE);
             println!("{} a device someone else controls, a careless or hostile correspondent, a coerced person", style::warn("not protected:"));
+        }
+    }
+    Ok(())
+}
+
+fn put(spec: &str, blob: &unheld_blob::Blob, what: &str) -> Result<(), Refuse> {
+    carrier(spec)?.put(blob).map_err(|_| Refuse::CarrierIo)?;
+    if let Some((kind, path)) = spec.split_once(':') {
+        let shown = Path::new(path).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        eprintln!("{} {}", style::ok("✓"), style::dim(&format!("{what}: {} bytes into {kind} {shown}", blob.len())));
+    } else if spec == "clipboard" {
+        eprintln!("{} {}", style::ok("✓"), style::dim(&format!("{what}: {} bytes on the clipboard", blob.len())));
+    }
+    Ok(())
+}
+
+/// One line per member, so the state of everyone who will read a message is seen every time (L18).
+fn show_roster(r: &unheld_core::Roster) {
+    println!("{} {}  {}", style::head(&r.name), style::dim(&format!("epoch {}", r.epoch)), style::dim(&format!("admin {}{}", r.admin, if r.i_am_admin { " (you)" } else { "" })));
+    for m in &r.members {
+        let label = if m.trust == MemberTrust::Vouched { style::warn(&m.label) } else { style::name(&m.label) };
+        let note = match (m.is_me, m.trust) {
+            (true, _) => "you".to_owned(),
+            (false, MemberTrust::Vouched) => format!("vouched for by {}; you never compared digits with them", r.admin),
+            _ => String::new(),
+        };
+        println!("  {} {:<16} {}", style::trust(m.trust), label, style::dim(&note));
+    }
+}
+
+fn group_cmd(cmd: GroupCmd, dir: &Path, json: bool) -> Result<(), Refuse> {
+    match cmd {
+        GroupCmd::New { name, peers, carrier: spec } => {
+            let ordered = carrier(&spec)?.ordered();
+            let mut core = Core::unlock(dir, &passphrase(false)?)?;
+            let names: Vec<&str> = peers.iter().map(String::as_str).collect();
+            let welcome = core.group_new(&name, &names, ordered)?;
+            put(&spec, &welcome, "welcome")?;
+            eprintln!("{} {} started with {} members; hand the welcome to each of them", style::ok("✓"), style::name(&name), names.len() + 1);
+        }
+        GroupCmd::Add { group, peer, carrier: spec, welcome: wspec } => {
+            let ordered = carrier(&spec)?.ordered();
+            let mut core = Core::unlock(dir, &passphrase(false)?)?;
+            let added = core.group_add(&group, &peer, ordered)?;
+            put(&spec, &added.for_group, "commit for the members")?;
+            put(&wspec, &added.for_newcomer, &format!("welcome for {peer}"))?;
+            eprintln!("{} {} added to {}; the first blob is for the members, the second for {}", style::ok("✓"), style::name(&peer), style::name(&group), style::name(&peer));
+        }
+        GroupCmd::Remove { group, member, carrier: spec } => {
+            let mut core = Core::unlock(dir, &passphrase(false)?)?;
+            let commit = core.group_remove(&group, &member)?;
+            put(&spec, &commit, "commit for the members")?;
+            eprintln!("{} {} removed from {}; they open nothing sealed from here on", style::ok("✓"), style::name(&member), style::name(&group));
+        }
+        GroupCmd::Send { group, carrier: spec } => {
+            let mut out = carrier(&spec)?;
+            if std::io::stdin().is_terminal() {
+                eprintln!("{}", style::dim(&format!("message to {group}: type, press Enter, then Ctrl-D to seal")));
+            }
+            let body = read_stdin()?;
+            if body.iter().all(|b| b.is_ascii_whitespace()) {
+                return Err(Refuse::EmptyMessage);
+            }
+            let mut core = Core::unlock(dir, &passphrase(false)?)?;
+            let roster = core.roster(&group)?;
+            let readers: Vec<String> = roster
+                .members
+                .iter()
+                .filter(|m| !m.is_me)
+                .map(|m| if m.trust == MemberTrust::Vouched { format!("{} (vouched by {})", m.label, roster.admin) } else { format!("{} ({:?})", m.label, m.trust) })
+                .collect();
+            eprintln!("{}", style::dim(&format!("readers: {}", readers.join(", "))));
+            let blob = core.group_seal(&group, &body)?;
+            out.put(&blob).map_err(|_| Refuse::CarrierIo)?;
+            if spec != "stdout" {
+                eprintln!("{} {}", style::ok("✓"), style::dim(&format!("sealed {} bytes for {} readers", blob.len(), readers.len())));
+            }
+        }
+        GroupCmd::Roster { group } => {
+            let core = Core::unlock(dir, &passphrase(false)?)?;
+            let r = core.roster(&group)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r).map_err(|_| Refuse::Protocol)?);
+            } else {
+                show_roster(&r);
+            }
+        }
+        GroupCmd::List => {
+            let core = Core::unlock(dir, &passphrase(false)?)?;
+            let gs = core.groups();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&gs).map_err(|_| Refuse::Protocol)?);
+            } else if gs.is_empty() {
+                println!("{}", style::dim("no groups; start one with `group new <name> <peer> <peer>...`"));
+            } else {
+                for r in &gs {
+                    show_roster(r);
+                }
+            }
+        }
+        GroupCmd::Rename { group, new_name } => {
+            let mut core = Core::unlock(dir, &passphrase(false)?)?;
+            core.group_rename(&group, &new_name)?;
+            println!("{} {} is now {}", style::ok("✓"), style::name(&group), style::name(&new_name));
         }
     }
     Ok(())

@@ -13,6 +13,19 @@ pub enum PeerState {
     Changed,
 }
 
+/// How a group member stands with you (L18). Only your own `verify` makes `Verified`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemberTrust {
+    /// You compared the fingerprint with this person.
+    Verified,
+    /// You have their introduction and have not compared it.
+    Pending,
+    /// Their key differs from the one you verified.
+    Changed,
+    /// You never met them; the group's admin put them in the roster.
+    Vouched,
+}
+
 /// Every way a verb refuses. Never carries plaintext or key material.
 #[derive(Debug, thiserror::Error)]
 pub enum Refuse {
@@ -58,4 +71,18 @@ pub enum Refuse {
     Protocol,
     #[error("payload exceeds the largest bucket")]
     TooLarge,
+    #[error("a group of {0} needs an ordered carrier, and file, clipboard and pipes are not; the bound here is {1}")]
+    NeedsOrder(usize, usize),
+    #[error("a group needs at least {0} members counting you; two people is a session")]
+    TooSmall(usize),
+    #[error("unknown group")]
+    UnknownGroup,
+    #[error("a group with this name exists")]
+    GroupExists,
+    #[error("only the group's admin changes its roster")]
+    NotAdmin,
+    #[error("roster change refused: its sender has no right to change this roster")]
+    NoRight,
+    #[error("no such member in this group")]
+    NotMember,
 }

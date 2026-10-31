@@ -4,8 +4,11 @@
 //! neither plaintext nor key material (KERNEL.md).
 
 pub mod config;
+mod group;
 pub mod vault;
 pub mod vocab;
+
+pub use group::{Member, Roster};
 
 use base64::Engine as _;
 use openmls::prelude::*;
@@ -16,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use unheld_blob::Blob;
-use vocab::{PeerState, Refuse};
+use vocab::{MemberTrust, PeerState, Refuse};
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
@@ -28,6 +31,9 @@ struct State {
     version: u32,
     identity: Option<IdentityRecord>,
     peers: BTreeMap<String, PeerRecord>,
+    /// Groups above two, by local name.
+    #[serde(default)]
+    groups: BTreeMap<String, GroupRecord>,
     /// The OpenMLS storage, base64 key and value pairs.
     storage: Vec<(String, String)>,
 }
@@ -50,6 +56,15 @@ struct PeerRecord {
     intro: Option<Vec<u8>>,
     /// Sessions with this peer, by group id.
     groups: Vec<Vec<u8>>,
+}
+
+/// A group above two. The roster itself lives in the MLS group; this remembers the local name
+/// and who may change the roster (docs/decisions/003-groups.md).
+#[derive(Serialize, Deserialize, Clone)]
+struct GroupRecord {
+    group_id: Vec<u8>,
+    /// Signature key of the one member whose commits may change the roster (L16).
+    admin: Vec<u8>,
 }
 
 /// A contact the fingerprint ceremony has admitted. Constructed by `verify` alone (L3).
@@ -90,12 +105,27 @@ impl Fingerprint {
     }
 }
 
-/// A message that `open` produced.
+/// A message that `open` produced, or a roster change every member gets to see (L16).
 #[derive(Debug, Clone, Serialize)]
 pub struct Opened {
+    /// The sender: a peer's name, or `?` and a key hash for a member you never verified.
     pub from: String,
+    /// How the sender stands with you (L18).
+    pub trust: MemberTrust,
+    /// For a sender you never verified, the admin who put them in the roster.
+    pub vouched_by: Option<String>,
+    /// The local group name when the message came through a group.
+    pub group: Option<String>,
     pub body: Vec<u8>,
     pub session_started: bool,
+    /// A roster change, in words, when this part was a commit.
+    pub change: Option<String>,
+}
+
+impl Opened {
+    fn pairwise(from: String, body: Vec<u8>, session_started: bool) -> Opened {
+        Opened { from, trust: MemberTrust::Verified, vouched_by: None, group: None, body, session_started, change: None }
+    }
 }
 
 /// An unlocked vault with its MLS provider. Dropping it saves nothing; call `save`.
@@ -354,22 +384,9 @@ impl Core {
         for part in parts {
             let msg = MlsMessageIn::tls_deserialize_exact(&part).map_err(|_| Refuse::BadBlob)?;
             match msg.extract() {
-                MlsMessageBodyIn::Welcome(welcome) => {
-                    let name = self.join(welcome)?;
-                    opened.push(Opened { from: name, body: Vec::new(), session_started: true });
-                }
-                MlsMessageBodyIn::PrivateMessage(pm) => {
-                    let (name, body) = self.receive(pm.into())?;
-                    if let Some(body) = body {
-                        opened.push(Opened { from: name, body, session_started: false });
-                    }
-                }
-                MlsMessageBodyIn::PublicMessage(pm) => {
-                    let (name, body) = self.receive(pm.into())?;
-                    if let Some(body) = body {
-                        opened.push(Opened { from: name, body, session_started: false });
-                    }
-                }
+                MlsMessageBodyIn::Welcome(welcome) => opened.push(self.join(welcome)?),
+                MlsMessageBodyIn::PrivateMessage(pm) => opened.extend(self.receive(pm.into())?),
+                MlsMessageBodyIn::PublicMessage(pm) => opened.extend(self.receive(pm.into())?),
                 _ => return Err(Refuse::BadBlob),
             }
         }
@@ -377,7 +394,9 @@ impl Core {
         Ok(opened)
     }
 
-    fn join(&mut self, welcome: Welcome) -> Result<String, Refuse> {
+    /// Join from a welcome. Its sender must be a peer you verified (L3, L16); otherwise the group
+    /// is deleted and nothing is kept. Two members is a session with that peer; more is a group.
+    fn join(&mut self, welcome: Welcome) -> Result<Opened, Refuse> {
         let cfg = MlsGroupJoinConfig::builder()
             .use_ratchet_tree_extension(true)
             .sender_ratchet_configuration(SenderRatchetConfiguration::new(
@@ -390,36 +409,61 @@ impl Core {
                 WelcomeError::NoMatchingKeyPackage | WelcomeError::NoMatchingEncryptionKey => Refuse::Replay,
                 _ => Refuse::Protocol,
             })?;
+        let sender_key = staged.welcome_sender().map_err(mls_err)?.signature_key().as_slice().to_vec();
+        let members = staged.members().count();
         let mut group = staged.into_group(&self.provider).map_err(mls_err)?;
-        let own = group.own_leaf_index();
-        let other = group
-            .members()
-            .find(|m| m.index != own)
-            .ok_or(Refuse::Protocol)?;
-        let found = self
-            .state
-            .peers
-            .iter()
-            .find(|(_, p)| p.signature_public == other.signature_key && p.state == PeerState::Verified)
-            .map(|(n, _)| n.clone());
-        match found {
-            Some(name) => {
-                let gid = group.group_id().as_slice().to_vec();
-                if let Some(r) = self.state.peers.get_mut(&name) {
-                    r.groups.push(gid);
-                }
-                Ok(name)
-            }
-            None => {
-                group.delete(self.provider.storage()).map_err(mls_err)?;
-                Err(Refuse::UnknownSender)
-            }
+        let Some(sender) = self.verified_peer(&sender_key) else {
+            group.delete(self.provider.storage()).map_err(mls_err)?;
+            return Err(Refuse::UnknownSender);
+        };
+        let gid = group.group_id().as_slice().to_vec();
+        if members >= config::group::MIN_MEMBERS {
+            let local = format!("{}{}", config::group::JOINED_NAME_PREFIX, prefix(&gid));
+            self.state.groups.insert(local.clone(), GroupRecord { group_id: gid, admin: sender_key });
+            let unverified = group.members().filter(|m| self.member_label(&m.signature_key).1 == MemberTrust::Vouched).count();
+            return Ok(Opened {
+                from: sender.clone(),
+                trust: MemberTrust::Verified,
+                vouched_by: None,
+                group: Some(local),
+                body: Vec::new(),
+                session_started: true,
+                change: Some(format!("{sender} welcomed you to a group of {members}; {unverified} of them you never verified")),
+            });
         }
+        if let Some(r) = self.state.peers.get_mut(&sender) {
+            r.groups.push(gid);
+        }
+        Ok(Opened::pairwise(sender, Vec::new(), true))
     }
 
-    fn receive(&mut self, pm: ProtocolMessage) -> Result<(String, Option<Vec<u8>>), Refuse> {
-        let gid = pm.group_id().clone();
-        let mut group = MlsGroup::load(self.provider.storage(), &gid)
+    /// Where a group id lives: a pairwise session with a peer, or a named group.
+    fn locate(&self, gid: &[u8]) -> Option<Located> {
+        if let Some((n, _)) = self.state.peers.iter().find(|(_, p)| p.groups.iter().any(|g| g == gid)) {
+            return Some(Located::Pair(n.clone()));
+        }
+        self.state
+            .groups
+            .iter()
+            .find(|(_, g)| g.group_id == gid)
+            .map(|(n, g)| Located::Group(n.clone(), g.clone()))
+    }
+
+    /// The name of a verified peer holding this signature key.
+    fn verified_peer(&self, key: &[u8]) -> Option<String> {
+        self.state
+            .peers
+            .iter()
+            .find(|(_, p)| p.signature_public == key && p.state == PeerState::Verified)
+            .map(|(n, _)| n.clone())
+    }
+
+    /// Process one message on a session or a group. A commit that changes a roster is merged
+    /// only when its sender holds the right (L16); otherwise it is refused and nothing moves.
+    fn receive(&mut self, pm: ProtocolMessage) -> Result<Option<Opened>, Refuse> {
+        let gid = pm.group_id().as_slice().to_vec();
+        let located = self.locate(&gid).ok_or(Refuse::UnknownSession)?;
+        let mut group = MlsGroup::load(self.provider.storage(), &GroupId::from_slice(&gid))
             .map_err(mls_err)?
             .ok_or(Refuse::UnknownSession)?;
         let processed = group
@@ -435,22 +479,92 @@ impl Core {
                 .ok_or(Refuse::UnknownSender)?,
             _ => return Err(Refuse::UnknownSender),
         };
-        let name = self
-            .state
-            .peers
-            .iter()
-            .find(|(_, p)| p.signature_public == sender_key && p.state == PeerState::Verified)
-            .map(|(n, _)| n.clone())
-            .ok_or(Refuse::UnknownSender)?;
-        match processed.into_content() {
-            ProcessedMessageContent::ApplicationMessage(app) => Ok((name, Some(app.into_bytes()))),
-            ProcessedMessageContent::StagedCommitMessage(commit) => {
-                group.merge_staged_commit(&self.provider, *commit).map_err(mls_err)?;
-                Ok((name, None))
+        match located {
+            Located::Pair(name) => {
+                let known = self.state.peers.get(&name).ok_or(Refuse::UnknownPeer)?;
+                if known.signature_public != sender_key || known.state != PeerState::Verified {
+                    return Err(Refuse::UnknownSender);
+                }
+                match processed.into_content() {
+                    ProcessedMessageContent::ApplicationMessage(app) => {
+                        Ok(Some(Opened::pairwise(name, app.into_bytes(), false)))
+                    }
+                    ProcessedMessageContent::StagedCommitMessage(commit) => {
+                        if commit.add_proposals().next().is_some() || commit.remove_proposals().next().is_some() {
+                            return Err(Refuse::NoRight);
+                        }
+                        group.merge_staged_commit(&self.provider, *commit).map_err(mls_err)?;
+                        Ok(None)
+                    }
+                    _ => Ok(None),
+                }
             }
-            _ => Ok((name, None)),
+            Located::Group(gname, rec) => {
+                let (from, trust) = self.member_label(&sender_key);
+                let vouched_by = (trust == MemberTrust::Vouched).then(|| self.member_label(&rec.admin).0);
+                match processed.into_content() {
+                    ProcessedMessageContent::ApplicationMessage(app) => Ok(Some(Opened {
+                        from,
+                        trust,
+                        vouched_by,
+                        group: Some(gname),
+                        body: app.into_bytes(),
+                        session_started: false,
+                        change: None,
+                    })),
+                    ProcessedMessageContent::StagedCommitMessage(commit) => {
+                        let added: Vec<String> = commit
+                            .add_proposals()
+                            .map(|a| self.member_label(a.add_proposal().key_package().leaf_node().signature_key().as_slice()).0)
+                            .collect();
+                        let removed: Vec<String> = commit
+                            .remove_proposals()
+                            .filter_map(|r| group.member_at(r.remove_proposal().removed()))
+                            .map(|m| self.member_label(&m.signature_key).0)
+                            .collect();
+                        let changes_roster = !added.is_empty() || !removed.is_empty();
+                        if changes_roster && sender_key != rec.admin {
+                            return Err(Refuse::NoRight);
+                        }
+                        let me_removed = commit.self_removed();
+                        group.merge_staged_commit(&self.provider, *commit).map_err(mls_err)?;
+                        let change = if me_removed {
+                            group.delete(self.provider.storage()).map_err(mls_err)?;
+                            self.state.groups.remove(&gname);
+                            format!("{from} removed you from {gname}; its keys are deleted")
+                        } else if changes_roster {
+                            let mut parts = Vec::new();
+                            if !added.is_empty() {
+                                parts.push(format!("added {}", added.join(", ")));
+                            }
+                            if !removed.is_empty() {
+                                parts.push(format!("removed {}", removed.join(", ")));
+                            }
+                            format!("{from} {} in {gname}", parts.join(" and "))
+                        } else {
+                            format!("{from} refreshed their keys in {gname}")
+                        };
+                        Ok(Some(Opened {
+                            from,
+                            trust,
+                            vouched_by,
+                            group: Some(gname),
+                            body: Vec::new(),
+                            session_started: false,
+                            change: Some(change),
+                        }))
+                    }
+                    _ => Ok(None),
+                }
+            }
         }
     }
+}
+
+/// Where a group id lives.
+enum Located {
+    Pair(String),
+    Group(String, GroupRecord),
 }
 
 /// What an outsider can read from one part of a blob without any key.
@@ -515,6 +629,14 @@ impl Core {
     /// `forget`: end every session with a peer and delete its keys. The peer and its
     /// verification stay; the next message starts a fresh session from a fresh introduction.
     pub fn forget(&mut self, name: &str) -> Result<usize, Refuse> {
+        if let Some(g) = self.state.groups.get(name).cloned() {
+            if let Some(mut group) = MlsGroup::load(self.provider.storage(), &GroupId::from_slice(&g.group_id)).map_err(mls_err)? {
+                group.delete(self.provider.storage()).map_err(mls_err)?;
+            }
+            self.state.groups.remove(name);
+            self.save()?;
+            return Ok(1);
+        }
         let rec = self.state.peers.get(name).ok_or(Refuse::UnknownPeer)?.clone();
         let mut ended = 0;
         for gid in &rec.groups {
