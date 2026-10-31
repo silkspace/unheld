@@ -134,6 +134,9 @@ impl Core {
     /// `unlock`: open an existing vault.
     pub fn unlock(dir: &Path, passphrase: &str) -> Result<Core, Refuse> {
         let path = vault_path(dir);
+        if !path.exists() {
+            return Err(Refuse::NoVault);
+        }
         let plain = vault::open_from_file(&path, passphrase)?;
         let state: State = serde_json::from_slice(&plain).map_err(|_| Refuse::VaultLocked)?;
         let provider = OpenMlsRustCrypto::default();

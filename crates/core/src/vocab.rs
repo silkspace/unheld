@@ -42,6 +42,8 @@ pub enum Refuse {
     Replay,
     #[error("vault could not be opened: wrong passphrase or damaged file")]
     VaultLocked,
+    #[error("no vault for this profile; create one with `id new <name>` or pass `--profile <name>`")]
+    NoVault,
     #[error("vault i/o failed")]
     VaultIo,
     #[error("protocol error")]
