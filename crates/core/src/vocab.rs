@@ -101,4 +101,6 @@ pub enum Refuse {
     ThisDevice,
     #[error("vault was written by an older build and this one does not read it")]
     VaultOld,
+    #[error("key change refused: no continuity statement from the key that was verified")]
+    NoContinuity,
 }

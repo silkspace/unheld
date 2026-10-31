@@ -90,6 +90,12 @@ enum Cmd {
 enum IdCmd {
     New { name: String },
     Show,
+    /// New identity keys. Every peer sees `Changed` with your next message and must verify again;
+    /// your other devices take the new key from the ring blob written here.
+    Rotate {
+        #[arg(short, long, default_value = "stdout")]
+        carrier: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -303,6 +309,16 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
             let this = core.devices()?.into_iter().find(|d| d.is_this).map(|d| d.name).unwrap_or_default();
             println!("{}  {}  {}  {}", style::name(core.name()?), style::hash(&core.own_fingerprint_prefix()?), style::dim(&format!("device {this}")), style::dim(&dir.display().to_string()));
+        }
+        Cmd::Id { cmd: IdCmd::Rotate { carrier: spec } } => {
+            let mut core = Core::unlock(&dir, &passphrase(false)?)?;
+            let outs = core.rotate()?;
+            if outs.is_empty() {
+                eprintln!("{} key rotated  {}; every peer sees Changed with your next message and must compare digits again", style::ok("✓"), style::hash(&core.own_fingerprint_prefix()?));
+            } else {
+                put_many(&spec, &outs)?;
+                eprintln!("{} key rotated  {}; the blob above is for your other devices; every peer sees Changed with your next message", style::ok("✓"), style::hash(&core.own_fingerprint_prefix()?));
+            }
         }
         Cmd::Intro { cmd: IntroCmd::Export { qr } } => {
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;

@@ -36,6 +36,11 @@ pub mod device {
     pub const SIGNATURE_LEN: usize = 64;
     /// Version byte of the device certificate carried in every credential.
     pub const CERT_VERSION: u8 = 1;
+    /// Version byte of a certificate that also carries a continuity statement from a previous
+    /// identity key (L14).
+    pub const CERT_VERSION_ROTATED: u8 = 2;
+    /// Domain separator for the continuity statement the old identity key signs over the new.
+    pub const ROTATE_DOMAIN: &[u8] = b"unheld rotate v1";
     /// Domain separator for certificate signatures and the enrolment seal.
     pub const DOMAIN: &[u8] = b"unheld device v1";
     /// Domain separator for the digits a new device shows its witness.

@@ -69,11 +69,21 @@ struct IdentityRecord {
     devices: BTreeMap<String, DeviceRecord>,
     /// The session among this identity's devices alone, once there are two.
     ring: Option<Vec<u8>>,
+    /// Identity keys this was before each rotation, oldest first (L14).
+    #[serde(default)]
+    previous: Vec<Vec<u8>>,
+    /// Sessions whose leaf still carries an old credential of ours, updated on next send.
+    #[serde(default)]
+    needs_update: Vec<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 struct PeerRecord {
+    /// The peer's identity key as last seen; `Changed` until verified again after a rotation.
     signature_public: Vec<u8>,
+    /// Identity keys this peer held before, so a device of theirs not yet updated is still them.
+    #[serde(default)]
+    previous: Vec<Vec<u8>>,
     state: PeerState,
     /// Their unused introduction (a serialised key package), consumed when a session starts.
     intro: Option<Vec<u8>>,
@@ -254,6 +264,8 @@ impl Core {
             cert: cert.encode(),
             devices,
             ring: None,
+            previous: Vec::new(),
+            needs_update: Vec::new(),
         });
         core.save()?;
         Ok(core)
@@ -384,10 +396,12 @@ impl Core {
             Some(existing) => existing.state,
             None => PeerState::Pending,
         };
+        let previous = self.state.peers.get(name).map(|p| p.previous.clone()).unwrap_or_default();
         self.state.peers.insert(
             name.to_owned(),
             PeerRecord {
                 signature_public: their_pub,
+                previous,
                 state,
                 intro: Some(intro.0.clone()),
                 groups: self
@@ -472,6 +486,9 @@ impl Core {
             }
         };
 
+        if let Some(update) = self.pending_update(&mut group)? {
+            parts.push(update);
+        }
         let msg = group
             .create_message(&self.provider, &signer, body)
             .map_err(mls_err)?;
@@ -640,18 +657,19 @@ impl Core {
         };
         let sender_identity = self.member_identity(&sender).ok_or(Refuse::UnknownSender)?;
         let me = self.identity()?.signature_public.clone();
+        let i_sent = self.is_me(&sender_identity);
         let (from, trust) = self.member_label(&sender_identity);
         let (group_name, admin) = match &located {
             Located::Pair(name) => {
                 let known = self.state.peers.get(name).ok_or(Refuse::UnknownPeer)?;
-                let is_peer = known.signature_public == sender_identity && known.state == PeerState::Verified;
-                if !is_peer && sender_identity != me {
+                let is_peer = known.signature_public == sender_identity || known.previous.iter().any(|p| p == &sender_identity);
+                if !(is_peer && known.state != PeerState::Pending) && !i_sent {
                     return Err(Refuse::UnknownSender);
                 }
                 (None, None)
             }
             Located::Ring => {
-                if sender_identity != me {
+                if !i_sent {
                     return Err(Refuse::UnknownSender);
                 }
                 (None, Some(me.clone()))
@@ -665,11 +683,28 @@ impl Core {
         match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(app) => {
                 if matches!(located, Located::Ring) {
+                    self.receive_ring(&app.into_bytes())?;
                     return Ok(None);
                 }
                 Ok(Some(Opened { from, trust, vouched_by, group: group_name, body: app.into_bytes(), session_started: false, change: None }))
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
+                // A sender whose new leaf names another identity is rotating its key, and may do
+                // so only with the old key's statement over the new one (L14).
+                let rotation = commit
+                    .update_path_leaf_node()
+                    .and_then(|leaf| device::leaf_cert(&self.provider, leaf.credential(), leaf.signature_key().as_slice()))
+                    .filter(|cert| cert.identity != sender_identity)
+                    .map(|cert| match cert.continuity {
+                        Some(c) if c.previous == sender_identity => Ok(cert.identity),
+                        _ => Err(Refuse::NoContinuity),
+                    })
+                    .transpose()?;
+                if let Some(new_key) = &rotation {
+                    if i_sent && !self.is_me(new_key) {
+                        return Err(Refuse::NoContinuity);
+                    }
+                }
                 // Who comes and goes, by identity, before anything is merged.
                 let added: Vec<Vec<u8>> = commit
                     .add_proposals()
@@ -691,9 +726,15 @@ impl Core {
                 }
                 let me_removed = commit.self_removed();
                 group.merge_staged_commit(&self.provider, *commit).map_err(mls_err)?;
-                let still_here = group.members().any(|m| self.member_identity(&m).as_deref() == Some(me.as_slice()));
+                let rotated = match &rotation {
+                    Some(new_key) if !i_sent => self.note_rotation(&located, &sender_identity, new_key),
+                    _ => false,
+                };
+                let still_here = group.members().any(|m| self.member_identity(&m).map(|k| self.is_me(&k)).unwrap_or(false));
                 let where_ = group_name.clone().map(|g| format!(" in {g}")).unwrap_or_default();
-                let change = if me_removed && sender_identity == me {
+                let change = if rotated {
+                    format!("{from} changed their key{where_}; verify again before sending to them")
+                } else if me_removed && i_sent {
                     group.delete(self.provider.storage()).map_err(mls_err)?;
                     self.drop_session(&located);
                     format!("another device of yours revoked this one{where_}; those keys are deleted")
@@ -734,6 +775,25 @@ impl Core {
             }
             _ => Ok(None),
         }
+    }
+
+    /// A peer's leaf moved to a new identity with continuity from the old: the peer is `Changed`
+    /// until verified again, and if they were a group's admin the right follows the key. True
+    /// when a peer record changed.
+    fn note_rotation(&mut self, located: &Located, old_key: &[u8], new_key: &[u8]) -> bool {
+        if let Located::Group(gname, _) = located {
+            if let Some(g) = self.state.groups.get_mut(gname) {
+                if g.admin == old_key {
+                    g.admin = new_key.to_vec();
+                }
+            }
+        }
+        let Some(p) = self.state.peers.values_mut().find(|p| p.signature_public == old_key) else { return false };
+        p.previous.push(old_key.to_vec());
+        p.signature_public = new_key.to_vec();
+        p.state = PeerState::Changed;
+        p.intro = None;
+        true
     }
 
     /// Forget where a session lived once its keys are gone.

@@ -52,12 +52,12 @@ impl Core {
     /// stranger shown by key hash.
     pub(crate) fn member_label(&self, key: &[u8]) -> (String, MemberTrust) {
         if let Ok(id) = self.identity() {
-            if id.signature_public == key {
+            if self.is_me(key) {
                 return (id.name.clone(), MemberTrust::Verified);
             }
         }
         for (name, p) in &self.state.peers {
-            if p.signature_public == key {
+            if p.signature_public == key || p.previous.iter().any(|k| k == key) {
                 let trust = match p.state {
                     PeerState::Verified => MemberTrust::Verified,
                     PeerState::Pending => MemberTrust::Pending,
@@ -194,13 +194,19 @@ impl Core {
         Ok(blob)
     }
 
-    /// `seal` to a group: one blob every member opens.
+    /// `seal` to a group: one blob every member opens, with our credential update in front of it
+    /// if the key was rotated since the last message here (L14).
     pub fn group_seal(&mut self, name: &str, body: &[u8]) -> Result<Blob, Refuse> {
         let rec = self.group_record(name)?;
         let mut group = self.load_group(&rec)?;
         let signer = self.signer()?;
+        let mut parts = Vec::new();
+        if let Some(update) = self.pending_update(&mut group)? {
+            parts.push(update);
+        }
         let msg = group.create_message(&self.provider, &signer, body).map_err(mls_err)?;
-        let blob = Self::one_part_blob(&msg)?;
+        parts.push(msg.to_bytes().map_err(mls_err)?);
+        let blob = Blob::pad(&frame(&parts)?).map_err(|_| Refuse::TooLarge)?;
         self.save()?;
         Ok(blob)
     }
@@ -215,7 +221,7 @@ impl Core {
             .into_iter()
             .map(|(id, devices)| {
                 let (label, trust) = self.member_label(&id);
-                Member { label, trust, is_admin: id == rec.admin, is_me: &id == me, devices }
+                Member { label, trust, is_admin: id == rec.admin, is_me: self.is_me(&id), devices }
             })
             .collect();
         Ok(Roster {

@@ -25,6 +25,43 @@ pub struct Cert {
     /// Day of enrolment as seconds since the epoch, rounded to `config::device::ENROLLED_AT_STEP`.
     pub enrolled_at: u64,
     pub signature: Vec<u8>,
+    /// After a rotation: the previous identity key and its signature over the new one (L14).
+    pub continuity: Option<Continuity>,
+}
+
+/// The old identity key's statement that the new one is its successor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Continuity {
+    pub previous: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+impl Continuity {
+    fn signed_part(previous: &[u8], next: &[u8]) -> Vec<u8> {
+        let mut m = Vec::with_capacity(config::device::ROTATE_DOMAIN.len() + previous.len() + next.len());
+        m.extend_from_slice(config::device::ROTATE_DOMAIN);
+        m.extend_from_slice(previous);
+        m.extend_from_slice(next);
+        m
+    }
+
+    pub(crate) fn issue(old: &SignatureKeyPair, next: &[u8]) -> Result<Continuity, Refuse> {
+        let signature = old.sign(&Self::signed_part(old.public(), next)).map_err(mls_err)?;
+        Ok(Continuity { previous: old.to_public_vec(), signature })
+    }
+
+    /// True when `previous` signed `next` as its successor.
+    pub(crate) fn holds(&self, provider: &impl OpenMlsProvider, next: &[u8]) -> bool {
+        provider
+            .crypto()
+            .verify_signature(
+                config::mls::CIPHERSUITE.signature_algorithm(),
+                &Self::signed_part(&self.previous, next),
+                &self.previous,
+                &self.signature,
+            )
+            .is_ok()
+    }
 }
 
 impl Cert {
@@ -44,15 +81,19 @@ impl Cert {
         let signature = identity
             .sign(&Self::signed_part(&identity_pk, device, enrolled_at))
             .map_err(mls_err)?;
-        Ok(Cert { identity: identity_pk, device: device.to_vec(), enrolled_at, signature })
+        Ok(Cert { identity: identity_pk, device: device.to_vec(), enrolled_at, signature, continuity: None })
     }
 
     pub(crate) fn encode(&self) -> Vec<u8> {
-        let mut out = vec![config::device::CERT_VERSION];
+        let mut out = vec![if self.continuity.is_some() { config::device::CERT_VERSION_ROTATED } else { config::device::CERT_VERSION }];
         out.extend_from_slice(&self.identity);
         out.extend_from_slice(&self.device);
         out.extend_from_slice(&self.enrolled_at.to_be_bytes());
         out.extend_from_slice(&self.signature);
+        if let Some(c) = &self.continuity {
+            out.extend_from_slice(&c.previous);
+            out.extend_from_slice(&c.signature);
+        }
         out
     }
 
@@ -60,16 +101,37 @@ impl Cert {
     /// device key it names is `leaf_key`, the key that signed the leaf carrying it.
     pub(crate) fn verify(provider: &impl OpenMlsProvider, bytes: &[u8], leaf_key: &[u8]) -> Option<Cert> {
         let pk = config::device::KEY_LEN;
+        let sg = config::device::SIGNATURE_LEN;
         let (version, rest) = bytes.split_first()?;
-        if *version != config::device::CERT_VERSION {
-            return None;
-        }
+        let rotated = match *version {
+            v if v == config::device::CERT_VERSION => false,
+            v if v == config::device::CERT_VERSION_ROTATED => true,
+            _ => return None,
+        };
         let identity = rest.get(..pk)?.to_vec();
         let device = rest.get(pk..2 * pk)?.to_vec();
         let at = rest.get(2 * pk..2 * pk + 8)?;
         let enrolled_at = u64::from_be_bytes(at.try_into().ok()?);
-        let signature = rest.get(2 * pk + 8..)?.to_vec();
-        if device != leaf_key || signature.len() != config::device::SIGNATURE_LEN {
+        let signature = rest.get(2 * pk + 8..2 * pk + 8 + sg)?.to_vec();
+        let tail = rest.get(2 * pk + 8 + sg..)?;
+        let continuity = if rotated {
+            let previous = tail.get(..pk)?.to_vec();
+            let signature = tail.get(pk..)?.to_vec();
+            if signature.len() != sg {
+                return None;
+            }
+            let c = Continuity { previous, signature };
+            if !c.holds(provider, &identity) {
+                return None;
+            }
+            Some(c)
+        } else {
+            if !tail.is_empty() {
+                return None;
+            }
+            None
+        };
+        if device != leaf_key {
             return None;
         }
         provider
@@ -81,8 +143,15 @@ impl Cert {
                 &signature,
             )
             .ok()?;
-        Some(Cert { identity, device, enrolled_at, signature })
+        Some(Cert { identity, device, enrolled_at, signature, continuity })
     }
+}
+
+/// What travels on the ring: control among a person's own devices, never shown as a message.
+#[derive(Serialize, Deserialize)]
+pub(crate) enum RingMessage {
+    /// The identity key changed; here is the new pair and the old key's statement over it.
+    Rotate { keypair: Vec<u8>, continuity_previous: Vec<u8>, continuity_signature: Vec<u8> },
 }
 
 /// The identity a leaf belongs to, if its certificate holds. A leaf with no valid certificate
@@ -167,6 +236,9 @@ impl Enrolment {
     }
 }
 
+/// A peer as the enrolment carries it: name, identity key, previous identity keys, state.
+type PeerEntry = (String, Vec<u8>, Vec<Vec<u8>>, PeerState);
+
 /// The plaintext of an enrolment bundle. The identity's private key travels here and nowhere
 /// else, sealed to a key that exists on the new device alone.
 #[derive(Serialize, Deserialize)]
@@ -175,10 +247,12 @@ struct Bundle {
     /// The identity key pair in its serde form, the same bytes the vault's key store holds.
     identity_keypair: Vec<u8>,
     identity_public: Vec<u8>,
+    /// Identity keys before each rotation, so leaves not yet updated still read as this identity.
+    identity_previous: Vec<Vec<u8>>,
     device_name: String,
     cert: Vec<u8>,
     devices: Vec<(String, DeviceRecord)>,
-    peers: Vec<(String, Vec<u8>, PeerState)>,
+    peers: Vec<PeerEntry>,
     /// Every session the new device will be welcomed into, and what it is.
     groups: Vec<(Vec<u8>, Expected)>,
     /// How many introductions the newcomer must hand back: one per session plus the ring.
@@ -209,6 +283,112 @@ impl Core {
     /// Issue this identity's certificate for a device key.
     pub(crate) fn issue_cert(&self, device: &[u8]) -> Result<Cert, Refuse> {
         Cert::issue(&self.identity_signer()?, device, now())
+    }
+
+    /// `rotate`: a new identity key, with the old key's statement that the new one succeeds it
+    /// (L14). Every peer sees `Changed` with the next message to them and must verify again;
+    /// every other device of yours gets the new key over the ring, which is the one blob
+    /// returned here. The old private key is deleted.
+    pub fn rotate(&mut self) -> Result<Vec<Outbound>, Refuse> {
+        let old = self.identity_signer()?;
+        let id = self.identity()?.clone();
+        let new = SignatureKeyPair::new(config::mls::CIPHERSUITE.signature_algorithm()).map_err(mls_err)?;
+        new.store(self.provider.storage()).map_err(mls_err)?;
+        let continuity = Continuity::issue(&old, new.public())?;
+        let mut outs = Vec::new();
+        // Tell the other devices first, under the old leaf, then move this leaf in the ring.
+        if let Some(ring_gid) = id.ring.clone() {
+            let signer = self.signer()?;
+            let mut ring = self.load_gid(&ring_gid)?;
+            let note = RingMessage::Rotate {
+                keypair: serde_json::to_vec(&new).map_err(|_| Refuse::Protocol)?,
+                continuity_previous: continuity.previous.clone(),
+                continuity_signature: continuity.signature.clone(),
+            };
+            let body = serde_json::to_vec(&note).map_err(|_| Refuse::Protocol)?;
+            let msg = ring.create_message(&self.provider, &signer, &body).map_err(mls_err)?;
+            let mut parts = vec![msg.to_bytes().map_err(mls_err)?];
+            self.install_identity(&new, &continuity)?;
+            let cwk = self.credential_with_key()?;
+            let params = LeafNodeParameters::builder().with_credential_with_key(cwk).build();
+            let bundle = ring.self_update(&self.provider, &signer, params).map_err(mls_err)?;
+            ring.merge_pending_commit(&self.provider).map_err(mls_err)?;
+            parts.push(bundle.commit().to_bytes().map_err(mls_err)?);
+            outs.push(Outbound { to: Target::Ring, blob: Blob::pad(&frame(&parts)?).map_err(|_| Refuse::TooLarge)? });
+        } else {
+            self.install_identity(&new, &continuity)?;
+        }
+        SignatureKeyPair::delete(self.provider.storage(), old.public(), config::mls::CIPHERSUITE.signature_algorithm()).map_err(mls_err)?;
+        self.save()?;
+        Ok(outs)
+    }
+
+    /// Make a new identity key this device's: new certificate with the continuity statement,
+    /// the old key remembered, and every session marked for a credential update on next send.
+    fn install_identity(&mut self, new: &SignatureKeyPair, continuity: &Continuity) -> Result<(), Refuse> {
+        let id = self.identity()?.clone();
+        let mut cert = Cert::issue(new, &id.device_public, now())?;
+        cert.continuity = Some(continuity.clone());
+        let sessions: Vec<Vec<u8>> = self
+            .state
+            .peers
+            .values()
+            .flat_map(|p| p.groups.iter().cloned())
+            .chain(self.state.groups.values().map(|g| g.group_id.clone()))
+            .collect();
+        for g in self.state.groups.values_mut() {
+            if g.admin == id.signature_public {
+                g.admin = new.to_public_vec();
+            }
+        }
+        let rec = self.state.identity.as_mut().ok_or(Refuse::NoIdentity)?;
+        rec.previous.push(rec.signature_public.clone());
+        rec.signature_public = new.to_public_vec();
+        rec.cert = cert.encode();
+        rec.needs_update = sessions;
+        Ok(())
+    }
+
+    /// Another device of yours rotated: take the new key and update every leaf on next send.
+    pub(crate) fn receive_ring(&mut self, body: &[u8]) -> Result<(), Refuse> {
+        let note: RingMessage = serde_json::from_slice(body).map_err(|_| Refuse::Protocol)?;
+        match note {
+            RingMessage::Rotate { keypair, continuity_previous, continuity_signature } => {
+                let new: SignatureKeyPair = serde_json::from_slice(&keypair).map_err(|_| Refuse::Protocol)?;
+                let continuity = Continuity { previous: continuity_previous, signature: continuity_signature };
+                let current = self.identity()?.signature_public.clone();
+                if continuity.previous != current || !continuity.holds(&self.provider, new.public()) {
+                    return Err(Refuse::NoContinuity);
+                }
+                new.store(self.provider.storage()).map_err(mls_err)?;
+                self.install_identity(&new, &continuity)?;
+                SignatureKeyPair::delete(self.provider.storage(), &current, config::mls::CIPHERSUITE.signature_algorithm()).map_err(mls_err)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// If this session still shows an old credential of ours, the commit that updates it, to go
+    /// in front of the next message (L14: every peer told on next send).
+    pub(crate) fn pending_update(&mut self, group: &mut MlsGroup) -> Result<Option<Vec<u8>>, Refuse> {
+        let gid = group.group_id().as_slice().to_vec();
+        if !self.identity()?.needs_update.contains(&gid) {
+            return Ok(None);
+        }
+        let signer = self.signer()?;
+        let cwk = self.credential_with_key()?;
+        let params = LeafNodeParameters::builder().with_credential_with_key(cwk).build();
+        let bundle = group.self_update(&self.provider, &signer, params).map_err(mls_err)?;
+        group.merge_pending_commit(&self.provider).map_err(mls_err)?;
+        if let Some(id) = self.state.identity.as_mut() {
+            id.needs_update.retain(|g| g != &gid);
+        }
+        Ok(Some(bundle.commit().to_bytes().map_err(mls_err)?))
+    }
+
+    /// True when this identity key is ours now or was ours before a rotation.
+    pub(crate) fn is_me(&self, identity: &[u8]) -> bool {
+        self.identity().map(|i| i.signature_public == identity || i.previous.iter().any(|p| p == identity)).unwrap_or(false)
     }
 
     /// A vault for a device that has no identity yet. Returns the request it hands to a device
@@ -263,10 +443,11 @@ impl Core {
             name: id.name.clone(),
             identity_keypair: serde_json::to_vec(&identity).map_err(|_| Refuse::Protocol)?,
             identity_public: identity.to_public_vec(),
+            identity_previous: id.previous.clone(),
             device_name: device_name.to_owned(),
             cert: cert.encode(),
             devices,
-            peers: self.state.peers.iter().map(|(n, p)| (n.clone(), p.signature_public.clone(), p.state)).collect(),
+            peers: self.state.peers.iter().map(|(n, p)| (n.clone(), p.signature_public.clone(), p.previous.clone(), p.state)).collect(),
             groups: self
                 .state
                 .peers
@@ -318,9 +499,11 @@ impl Core {
             cert: bundle.cert,
             devices: bundle.devices.into_iter().collect(),
             ring: None,
+            previous: bundle.identity_previous,
+            needs_update: Vec::new(),
         });
-        for (name, key, state) in bundle.peers {
-            self.state.peers.insert(name, crate::PeerRecord { signature_public: key, state, intro: None, groups: Vec::new() });
+        for (name, key, previous, state) in bundle.peers {
+            self.state.peers.insert(name, crate::PeerRecord { signature_public: key, previous, state, intro: None, groups: Vec::new() });
         }
         self.state.expected = bundle.groups;
         self.state.pending = None;
@@ -586,6 +769,90 @@ mod tests {
         // Carol's leaf carries Carol's certificate, not Bob's, so this is a person and refused (L16).
         assert!(matches!(alice.open(&blob), Err(Refuse::NoRight)));
         let _ = carol;
+    }
+
+    #[test]
+    fn a_rotated_key_is_changed_everywhere_until_verified_again() {
+        let mut alice = Core::create(&tmp("rot-alice"), "pw", "alice").unwrap();
+        let mut bob = Core::create(&tmp("rot-bob"), "pw", "bob").unwrap();
+        let mut carol = Core::create(&tmp("rot-carol"), "pw", "carol").unwrap();
+        pair(&mut alice, "alice", &mut bob, "bob");
+        pair(&mut alice, "alice", &mut carol, "carol");
+        bob.open(&alice.seal("bob", b"before").unwrap()).unwrap();
+        alice.import("bob", &bob.intro().unwrap()).unwrap();
+        let welcome = alice.group_new("team", &["bob", "carol"], false).unwrap();
+        bob.open(&welcome).unwrap();
+        carol.open(&welcome).unwrap();
+        // Alice's phone is enrolled and connected.
+        let (mut phone, request) = Core::create_device(&tmp("rot-phone"), "pw").unwrap();
+        let enrolment = alice.enroll("phone", &request, true).unwrap();
+        let attach = phone.join_device(&enrolment).unwrap();
+        let outs = alice.connect_device(&attach).unwrap();
+        bob.open(blob_for(&outs, &Target::Peer("bob".into()))).unwrap();
+        bob.open(blob_for(&outs, &Target::Group("team".into()))).unwrap();
+        carol.open(blob_for(&outs, &Target::Group("team".into()))).unwrap();
+        phone.open(blob_for(&outs, &Target::Device)).unwrap();
+        let old_fp = bob.fingerprint("alice").unwrap();
+
+        // Rotation: the ring carries the new key to the phone; nothing else moves yet.
+        let outs = alice.rotate().unwrap();
+        assert_eq!(outs.iter().map(|o| o.to.clone()).collect::<Vec<_>>(), vec![Target::Ring]);
+        assert!(phone.open(blob_for(&outs, &Target::Ring)).unwrap().is_empty());
+        assert_eq!(phone.own_fingerprint_prefix().unwrap(), alice.own_fingerprint_prefix().unwrap());
+        assert_eq!(bob.peer("alice").unwrap().state, PeerState::Verified);
+
+        // The next message to Bob carries the credential update: Alice is Changed, the words arrive,
+        // and sending to her is refused until the digits are compared again (L14).
+        let after = alice.seal("bob", b"after").unwrap();
+        assert_eq!(phone.open(&after).unwrap()[1].body, b"after");
+        let got = bob.open(&after).unwrap();
+        assert!(got[0].change.as_deref().unwrap().contains("changed their key"));
+        assert_eq!((got[1].from.as_str(), got[1].trust, &got[1].body[..]), ("alice", MemberTrust::Changed, &b"after"[..]));
+        assert_eq!(bob.peer("alice").unwrap().state, PeerState::Changed);
+        assert!(matches!(bob.seal("alice", b"reply"), Err(Refuse::Changed)));
+        assert_ne!(bob.fingerprint("alice").unwrap(), old_fp);
+        assert_eq!(bob.fingerprint("alice").unwrap(), alice.fingerprint("bob").unwrap());
+        bob.verify("alice", true).unwrap();
+        let reply = bob.seal("alice", b"reply").unwrap();
+        assert_eq!(alice.open(&reply).unwrap()[0].body, b"reply");
+        // The phone, not yet updated in this session, still reads as Alice and updates on its send.
+        assert_eq!(phone.open(&reply).unwrap()[0].body, b"reply");
+        let from_phone = phone.seal("bob", b"phone after").unwrap();
+        let got = bob.open(&from_phone).unwrap();
+        assert!(got[0].change.as_deref().unwrap().contains("refreshed"));
+        assert_eq!((got[1].from.as_str(), got[1].trust), ("alice", MemberTrust::Verified));
+        assert!(alice.open(&from_phone).unwrap()[0].change.as_deref().unwrap().contains("refreshed"));
+
+        // In the group the admin's right follows the key: Carol sees Changed and later accepts an add.
+        let team = alice.group_seal("team", b"team after").unwrap();
+        let got = carol.open(&team).unwrap();
+        assert!(got[0].change.as_deref().unwrap().contains("changed their key"));
+        assert_eq!(got[1].trust, MemberTrust::Changed);
+        bob.open(&team).unwrap();
+        phone.open(&team).unwrap();
+        let carol_team = carol.groups().into_iter().next().unwrap();
+        assert!(carol_team.members.iter().any(|m| m.is_admin && m.trust == MemberTrust::Changed));
+        let mut dave = Core::create(&tmp("rot-dave"), "pw", "dave").unwrap();
+        pair(&mut alice, "alice", &mut dave, "dave");
+        let added = alice.group_add("team", "dave", false).unwrap();
+        assert!(carol.open(&added.for_group).unwrap()[0].change.as_deref().unwrap().contains("added"));
+        bob.open(&added.for_group).unwrap();
+        phone.open(&added.for_group).unwrap();
+
+        // A new identity without the old key's statement is refused and nothing moves.
+        let fresh = SignatureKeyPair::new(config::mls::CIPHERSUITE.signature_algorithm()).unwrap();
+        fresh.store(bob.provider.storage()).unwrap();
+        let forged = Cert::issue(&fresh, &bob.identity().unwrap().device_public, 0).unwrap();
+        let rec = bob.state.identity.as_mut().unwrap();
+        rec.signature_public = fresh.to_public_vec();
+        rec.cert = forged.encode();
+        rec.needs_update = bob.state.peers.get("alice").unwrap().groups.clone();
+        let epoch_before = alice.load_gid(&alice.state.peers.get("bob").unwrap().groups[0]).unwrap().epoch();
+        let forged_blob = bob.seal("alice", b"trust me").unwrap();
+        let outcome = alice.open(&forged_blob);
+        assert!(matches!(outcome, Err(Refuse::NoContinuity)), "got {:?}", outcome.map(|v| v.iter().map(|o| (o.from.clone(), o.change.clone())).collect::<Vec<_>>()));
+        assert_eq!(alice.load_gid(&alice.state.peers.get("bob").unwrap().groups[0]).unwrap().epoch(), epoch_before);
+        assert_eq!(alice.peer("bob").unwrap().state, PeerState::Verified);
     }
 
     #[test]
