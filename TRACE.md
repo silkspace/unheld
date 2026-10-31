@@ -20,8 +20,8 @@ Every law has a phase, a test, a review layer and a screen, and this file is whe
 | Law | Phase | Test | Review | Client surface |
 |-----|-------|------|--------|----------------|
 | L1 roundtrip | 3 | proptest over sessions and messages | R4 | none needed |
-| L2 zero custody | 2 | `cargo deny` ban on `carriers → secret`; grep for network calls outside `Carrier` | R3, R7 | relay and carrier picker shows "this carrier sees only ciphertext" |
-| L3 no skip | 2, 3 | compiler (one constructor); Tamarin authentication lemma | R2, R3 | the verify screen, which blocks sending until the pairwise number is compared |
+| L2 zero custody | 1 (POC), 2 | `carriers_cannot_depend_on_core`; Tamarin `secrecy` against the carrier; `cargo deny` ban and grep for network calls outside `Carrier` to come | R3, R7 | relay and carrier picker shows "this carrier sees only ciphertext" |
+| L3 no skip | 1 (POC) | compiler (one constructor); Tamarin `seal_only_to_a_genuine_key` and `opened_was_sealed` (formal/); `no_impersonation` stated, search open | R2, R3 | the verify screen, which blocks sending until the pairwise number is compared |
 | L4 uniform size | 3 | proptest on blob length; Kani harness | R4 | none; attachments show "sent as N chunks" |
 | L5 forward secrecy | 3 | cited proof; regression test on key deletion after ratchet step | R7 | none |
 | L6 post-compromise | 3 | cited proof; test that a leaked state stops opening after a round trip | R7 | none |
@@ -32,9 +32,9 @@ Every law has a phase, a test, a review layer and a screen, and this file is whe
 | L11 replay and reflection | 3 | adversarial carrier that replays and reflects | R4 | none; refused silently and counted |
 | L12 detectable omission | 3 | adversarial carrier that drops and reorders | R4 | a gap marker in the thread: "a message between these two was not delivered" |
 | L13 bounded state | 3 | flooding carrier; Kani on the skipped-key cap | R4 | none |
-| L14 key change blocks | 3 | compiler on `Changed`; Tamarin; test that `seal` refuses | R2, R3, R4 | contact turns red with "key changed, verify again"; send disabled |
+| L14 key change blocks | 1 (POC) | compiler on `Changed`; `changed_key_blocks_until_verified_again`; Tamarin `seal_only_to_a_genuine_key` with `changed_then_verified_again` | R2, R3, R4 | contact turns red with "key changed, verify again"; send disabled |
 | L15 enrolment needs witness | 5 | compiler on `Confirm`; Tamarin | R2, R3 | devices list; new device shows its fingerprint on an existing device and waits |
-| L16 no ghost | 1 (POC) | Tamarin on the policy layer; `a_roster_change_from_a_non_admin_is_refused_by_every_member` (a client altered to believe it is admin adds a member; every other client refuses the commit and its epoch does not move) | R2, R4, R7 | `open` prints every roster change: who added or removed whom |
+| L16 no ghost | 1 (POC) | Tamarin `no_ghost` (formal/); `a_roster_change_from_a_non_admin_is_refused_by_every_member` (a client altered to believe it is admin adds a member; every other client refuses the commit and its epoch does not move) | R2, R4, R7 | `open` prints every roster change: who added or removed whom |
 | L17 membership secrecy | 1 (POC) | cited MLS proof; `a_group_of_three_and_its_laws` (a newcomer opens nothing sealed before joining, a removed member opens nothing sealed after) | R7 | `group roster` |
 | L18 vouch is not verify | 1 (POC) | compiler on `MemberTrust`; `a_group_of_three_and_its_laws` (a member you never verified is `Vouched` with the admin's name, and `group send` lists every reader with their state) | R3 | member badge: Verified, Pending, Changed, or Vouched for by the admin |
 | L19 ordered or small | 1 (POC) | `a_large_group_needs_an_ordered_carrier` (one above the bound over an unordered carrier is refused before any key is touched) | R4 | the refusal names the bound and the carriers that do not order |
@@ -46,7 +46,7 @@ Every law has a phase, a test, a review layer and a screen, and this file is whe
 
 ## Proof of concept, what is green
 
-The workspace under `crates/` delivers criterion 1 in scripted form (intro files, a 60-digit pairwise number that agrees on both sides, send refused until confirmed), criterion 2 with file, stdio and clipboard carriers, tests for L1, L3, L4, L8, L10, L11 and L14, property tests over the blob parser, the crate-graph half of L2 as a test, and groups above two with one admin, tests for L16 to L19 and the roster change feed (`docs/decisions/003-groups.md`). Criterion 3 is covered for first contact (a welcome from an unverified sender is refused and its group deleted); the key-change half (L14) has the `Changed` state and no test yet. Criteria 4 and 5 are not started.
+The workspace under `crates/` delivers criterion 1 in scripted form (intro files, a 60-digit pairwise number that agrees on both sides, send refused until confirmed), criterion 2 with file, stdio and clipboard carriers, tests for L1, L3, L4, L8, L10, L11 and L14, property tests over the blob parser, the crate-graph half of L2 as a test, and groups above two with one admin, tests for L16 to L19 and the roster change feed (`docs/decisions/003-groups.md`). The policy layer is a Tamarin theory in `formal/` with every lemma proved by `scripts/prove.sh`: L2 against the carrier, L3 and L14 as "a seal reaches only a genuine verified key" and "what you open, the named peer sealed to you", and L16 as "a merged roster change was the admin's". Criterion 3 is covered for first contact (a welcome from an unverified sender is refused and its group deleted); the key-change half (L14) has the `Changed` state and no test yet. Criteria 4 and 5 are not started.
 
 ## The MVP, as acceptance criteria
 

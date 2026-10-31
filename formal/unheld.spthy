@@ -1,0 +1,198 @@
+/*
+  unheld policy layer, as a Tamarin theory.
+
+  Messaging Layer Security has its own proofs and is not modelled; the ratchet is one
+  symmetric session key here. What is modelled is everything unheld adds on top: the
+  self-signed introduction over the carrier, the local Pending/Verified/Changed state,
+  the fingerprint ceremony over a channel the carrier never touches, the verified-sender
+  rule at join, and the single-admin rule for roster changes. The adversary is the carrier
+  with the usual Dolev-Yao powers, plus Reveal, which hands it a long-term key and stands
+  for the one thing the README says is not protected: a device someone else controls.
+
+  Hashing is injective in the symbolic model, so comparing the fingerprint
+  h(<key for A, key for B>) is comparing the pair of keys, and the out-of-band channel
+  carries the pair.
+*/
+theory unheld_policy
+begin
+
+builtins: signing, asymmetric-encryption, symmetric-encryption
+
+restriction Equality:   "All x y #i. Eq(x, y) @i ==> x = y"
+restriction Inequality: "All x #i. Neq(x, x) @i ==> F"
+
+/* ---------- gen: an identity is a signing key; a name is a public label ---------- */
+
+rule Gen:
+  [ Fr(~sk) ]
+  --[ Gen($A, pk(~sk)) ]->
+  [ !Ltk($A, ~sk), !Pk($A, pk(~sk)) ]
+
+/* A device someone else controls. Lemmas say what survives it and what does not. */
+rule Reveal:
+  [ !Ltk($A, sk) ]
+  --[ Reveal($A) ]->
+  [ Out(sk) ]
+
+/* ---------- intro: a self-signed key package, handed over any channel ---------- */
+
+rule Intro:
+  [ !Ltk($A, sk), Fr(~ek) ]
+  --[ Intro($A, pk(sk)) ]->
+  [ !Ek($A, ~ek), Out(<pk(sk), pk(~ek), sign(<'kp', pk(sk), pk(~ek)>, sk)>) ]
+
+/* ---------- import: staged under a locally chosen name; Pending until verify ---------- */
+
+/* Holds is the record that this key, with this encryption key, was imported under this name.
+   The signature binds the two, so a key package is either a peer's own or refused. */
+rule Import:
+  [ !Pk($B, pkB), In(<pkX, ekX, sig>) ]
+  --[ Eq(verify(sig, <'kp', pkX, ekX>, pkX), true), Import($B, $A, pkX) ]->
+  [ !Holds($B, $A, pkX, ekX) ]
+
+/* A second key under a name already verified is the Changed state (L14). In the code it is
+   a match arm that refuses to seal; here it is the observation, and the lemmas below say
+   that whatever is imported, a seal reaches only a key the named peer made and you verified. */
+rule Changed:
+  [ !Trusts($B, $A, pkOld, ekOld), !Holds($B, $A, pkNew, ekNew) ]
+  --[ Neq(pkNew, pkOld), Changed($B, $A, pkNew) ]->
+  []
+
+/* ---------- verify: the ceremony over a channel that is not an object of C ---------- */
+
+/* B reads the pairwise number aloud: its own key and the key it holds for A. */
+rule Speak:
+  [ !Holds($B, $A, pkX, ekX), !Pk($B, pkB) ]
+  --[ Speak($B, $A) ]->
+  [ OOB($B, $A, pkX, pkB) ]
+
+/* A compares: what B said about A must be A's own key, what B said about itself must be
+   the key A holds for B. Only a match mints Trusts; "no" is this rule not firing. */
+rule Verify:
+  [ !Holds($A, $B, pkY, ekY), !Pk($A, pkA), OOB($B, $A, pkA, pkY) ]
+  --[ Verified($A, $B, pkY) ]->
+  [ !Trusts($A, $B, pkY, ekY) ]
+
+/* ---------- seal and open: the session, with MLS abstracted to one key ---------- */
+
+/* start: a welcome to the introduction key, signed by the sender. Only to Verified (L3).
+   The welcome names the recipient's identity key outside the encryption and the sender's
+   inside it. MLS does both by construction: the recipient's key package is named by hash,
+   and the confirmation tag ties the group secrets to the tree the signer is in. Without the
+   first the prover found an unknown-key-share trace (a hostile third party presents your
+   peer's encryption key as its own, and your peer reads words meant for the third party);
+   without the second it found the mirror image (a hostile verified peer re-signs a welcome
+   it cannot read, and you join a session with the wrong party). Both are in the git history
+   of this file. */
+rule Start:
+  let c = aenc(<~k, pk(skA)>, ekY) in
+  [ !Trusts($A, $B, pkY, ekY), !Ltk($A, skA), Fr(~k) ]
+  --[ SealTo($A, $B, pkY), Start($A, $B, ~k) ]->
+  [ !Session($A, $B, ~k), Out(<'welcome', pkY, c, sign(<'welcome', pkY, c>, skA)>) ]
+
+/* join: the welcome must name this identity, carry the sender's key inside, and be signed
+   by the key verified for that sender, else nothing is kept. */
+rule Join:
+  let c = aenc(<k, pkX>, pk(ekB)) in
+  [ !Trusts($B, $A, pkX, ekX), !Pk($B, pkB), !Ek($B, ekB), In(<'welcome', pkB, c, sig>) ]
+  --[ Eq(verify(sig, <'welcome', pkB, c>, pkX), true), Join($B, $A, k) ]->
+  [ !Session($B, $A, k) ]
+
+rule Seal:
+  [ !Session($A, $B, k), !Ltk($A, skA), Fr(~m) ]
+  --[ Sealed($A, $B, ~m) ]->
+  [ Out(senc(<'app', ~m, sign(<'app', ~m>, skA)>, k)) ]
+
+rule Open:
+  [ !Session($B, $A, k), !Trusts($B, $A, pkX, ekX), In(senc(<'app', m, sig>, k)) ]
+  --[ Eq(verify(sig, <'app', m>, pkX), true), Opened($B, $A, m) ]->
+  []
+
+/* ---------- groups: one admin, and a roster change is its signed commit (L16) ---------- */
+
+rule GroupNew:
+  [ !Ltk($A, skA), Fr(~gid) ]
+  --[ AdminOf($A, ~gid) ]->
+  [ !Admin($A, ~gid), Out(~gid) ]
+
+rule GroupWelcome:
+  [ !Admin($A, gid), !Ltk($A, skA) ]
+  -->
+  [ Out(<'gwelcome', gid, sign(<'gwelcome', gid>, skA)>) ]
+
+/* A joiner records as admin the verified key that signed its welcome. */
+rule GroupJoin:
+  [ !Trusts($B, $A, pkX, ekX), In(<'gwelcome', gid, sig>) ]
+  --[ Eq(verify(sig, <'gwelcome', gid>, pkX), true), GroupJoin($B, gid, pkX) ]->
+  [ !Member($B, gid, pkX) ]
+
+/* The admin changes the roster; pkN is whatever key it admits or removes. */
+rule Commit:
+  [ !Admin($A, gid), !Ltk($A, skA), In(pkN) ]
+  --[ Committed($A, gid, pkN) ]->
+  [ Out(<'commit', gid, pkN, sign(<'commit', gid, pkN>, skA)>) ]
+
+/* A member merges a roster change only under the admin key it recorded; otherwise refused. */
+rule Merge:
+  [ !Member($B, gid, pkAdmin), In(<'commit', gid, pkN, sig>) ]
+  --[ Eq(verify(sig, <'commit', gid, pkN>, pkAdmin), true), Merged($B, gid, pkN) ]->
+  []
+
+/* ---------- what must hold ---------- */
+
+/* The honest run exists: two people meet, verify, and a message is opened. */
+lemma executable: exists-trace
+  "Ex A B k m #s #j #t #i. Start(A, B, k) @s & Join(B, A, k) @j & Sealed(A, B, m) @t & Opened(B, A, m) @i
+     & s < j & j < t & t < i & not (Ex X #r. Reveal(X) @r)"
+
+/* The honest group run exists: a member merges a change the admin made. */
+lemma group_executable: exists-trace
+  "Ex B gid pkN #i. Merged(B, gid, pkN) @i"
+
+/* L3 and L14. Whatever the carrier injected, a message is sealed only to a key that the
+   named peer generated. Unconditional: it holds even against a revealed key, because the
+   channel the ceremony runs over is not the carrier. */
+lemma seal_only_to_a_genuine_key:
+  "All A B pkY #i. SealTo(A, B, pkY) @i ==> Ex #j. Gen(B, pkY) @j & j < i"
+
+/* Two steps the prover reuses. A joined session, if its named sender is honest, was started by
+   that sender for you and its key never reaches the carrier, whatever your own device did; and a
+   started session's key never reaches the carrier if the recipient is honest, whatever yours did. */
+lemma join_means_started [reuse]:
+  "All A B k #i. Join(B, A, k) @i & not (Ex #r. Reveal(A) @r)
+     ==> (Ex #j. Start(A, B, k) @j & j < i) & not (Ex #l. K(k) @l)"
+
+lemma start_key_secret [reuse]:
+  "All A B k #i. Start(A, B, k) @i & not (Ex #r. Reveal(B) @r)
+     ==> not (Ex #j. K(k) @j)"
+
+/* A step towards no impersonation: what B opens as from A, A sealed to someone. */
+lemma opened_was_sealed [reuse]:
+  "All A B m #i. Opened(B, A, m) @i & not (Ex #r. Reveal(A) @r)
+     ==> Ex Y #j. Sealed(A, Y, m) @j & j < i"
+
+/* No impersonation. If B opens a message as from A, A sealed it to B, unless A's device
+   is someone else's. */
+lemma no_impersonation:
+  "All A B m #i. Opened(B, A, m) @i & not (Ex #r. Reveal(A) @r)
+     ==> Ex #j. Sealed(A, B, m) @j & j < i"
+
+/* L2 against the carrier. A sealed message stays secret unless one endpoint is revealed. */
+lemma secrecy:
+  "All A B m #i. Sealed(A, B, m) @i
+     & not (Ex #r. Reveal(A) @r) & not (Ex #r. Reveal(B) @r)
+     ==> not (Ex #j. K(m) @j)"
+
+/* L16, no ghost. A roster change any member merges was committed by the group's admin,
+   unless some device is someone else's. The carrier alone produces none. */
+lemma no_ghost:
+  "All B gid pkN #i. Merged(B, gid, pkN) @i & not (Ex X #r. Reveal(X) @r)
+     ==> Ex A #j. Committed(A, gid, pkN) @j & j < i"
+
+/* Changed is reachable and is then left only through the ceremony: a trace where a verified
+   peer's key changes, the peer is verified again, and a session starts under the new key. */
+lemma changed_then_verified_again: exists-trace
+  "Ex A B pkNew #i #j #k. Changed(A, B, pkNew) @i & Verified(A, B, pkNew) @j & SealTo(A, B, pkNew) @k
+     & i < j & j < k"
+
+end

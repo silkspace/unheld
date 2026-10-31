@@ -58,7 +58,27 @@ echo "hello" | u --profile me send you | u --profile you open
 me › hello
 ```
 
-Three or more is a group: `u --profile me group new team you them -c file:/tmp/w` hands a welcome to verified peers, `group send` seals one blob for all of them and names every reader with their state first, and `open` prints every roster change as a line, so nobody is ever added quietly. Only the one who started the group changes its roster; every other client refuses a roster change from anyone else, and `group roster` shows who you verified yourself and who the admin merely vouched for. Above eight people the file, clipboard and pipe carriers are refused because they cannot order commits, which is the whole reason large groups usually need a server.
+Three or more is a group. Make a third profile, have it exchange introductions and verify with `me` only, and then:
+
+```bash
+u --profile me group new team you them -c file:/tmp/w    # one welcome for both
+u --profile you  open -c file:/tmp/w
+u --profile them open -c file:/tmp/w
+u --profile you  group list                              # me Verified, admin · them Vouched, by me
+echo "hello both" | u --profile me group send team -c file:/tmp/g
+u --profile you  open -c file:/tmp/g
+```
+
+```
+· me welcomed you to a group of 3; 1 of them you never verified
+g-bd68bc2320 epoch 1  admin me
+  Verified me
+  Verified you              you
+  Vouched  ?7f14c9c118      vouched for by me; you never compared digits with them
+[g-bd68bc2320] me › hello both
+```
+
+`you` never met `them`, and the client says so every time, including before every `group send`. `group add team more -c file:/tmp/c -w file:/tmp/wm` writes a commit for the members and a welcome for the newcomer; `group remove team them -c file:/tmp/r` writes a commit everyone opens as a line saying who removed whom, after which `them` opens nothing further. Only the one who started the group changes its roster, and every other client refuses a roster change from anyone else before merging it. Above eight people the file, clipboard and pipe carriers are refused, because they cannot order commits, which is the whole reason large groups usually need a server.
 
 Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte blob (type the message, Enter, then Ctrl-D), and `-c clipboard` puts it on the clipboard so you can paste it into any chat and `open -c clipboard` on the other side. Paste the file into a note or a chat to yourself: that is everything any carrier ever sees, and `u inspect -c file:/tmp/blob` shows exactly what. `u --profile you open -c file:/tmp/blob` reads it, a second open is refused as a replay, and one changed character is refused as malformed. `strings ~/.unheld/me/vault | grep -c hello` prints `0`, and the file has no header or magic bytes at all, so nothing identifies it as a vault. Every command needs `--profile`, because the profile is which of you is speaking. `rm -rf ~/.unheld/me ~/.unheld/you` deletes both identities completely, since nothing about them exists anywhere else.
 
@@ -76,12 +96,26 @@ Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte bl
 
 [TRACE.md](TRACE.md) maps every law to a phase, a test, a review layer and the screen where you see it. Rows with gaps say so.
 
+## proved
+
+`formal/unheld.spthy` is the policy layer as a Tamarin theory, with the carrier as a Dolev-Yao adversary over unbounded sessions, parties and keys, and `./scripts/prove.sh` runs the proofs:
+
+| | |
+|---|---|
+| `seal_only_to_a_genuine_key` | whatever the carrier injects, a seal reaches only a key the named peer generated and you verified (L3, L14), with no honesty assumption at all |
+| `opened_was_sealed` | what you open as from A, A sealed, unless A's device is someone else's; the sharper `no_impersonation`, that A sealed it to you, is stated and its search is still open |
+| `secrecy` | a sealed message never enters the carrier's knowledge while both devices are their owners' |
+| `no_ghost` | a merged roster change was committed by the admin; the carrier alone produces none (L16) |
+
+The prover earned its keep before anything was proved: two drafts of the welcome each admitted an unknown-key-share trace, and the bindings that close them are exactly the two MLS has by construction. [formal/README.md](formal/README.md) has the traces and what is left out.
+
 ## status
 
-Proof of concept. Two profiles exchange introductions, compare a pairwise 60-digit number, and talk through a file or a pipe with Messaging Layer Security underneath and an Argon2id-locked vault at rest. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, and the carriers crate is checked by test to depend on nothing that can name a key.
+Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe or the clipboard with Messaging Layer Security underneath and an Argon2id-locked vault at rest. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
-cargo test --workspace            # 10 tests: laws L1, L3, L4, L8, L11 and the crate graph
+cargo test --workspace            # 21 tests: laws L1, L3, L4, L8, L10, L11, L14, L16 to L19 and the crate graph
+./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
 ./scripts/demo.sh                 # two vaults, one file carrier, every refusal shown live
 ```
 
@@ -137,7 +171,7 @@ no plaintext in vault
 
 </details>
 
-Not yet: Tamarin model, property tests per law, the ordered relay for large groups, devices, rotation, recovery, reproducible builds, the log. See TRACE.md for which rows are green.
+Not yet: property tests per law, the ordered relay for large groups, devices, rotation, recovery, reproducible builds, the log. See TRACE.md for which rows are green.
 
 Primitives are never written here. Ratchet: [OpenMLS](https://github.com/openmls/openmls). Tor: [Arti](https://gitlab.torproject.org/tpo/core/arti). Everything else: RustCrypto, pinned, `cargo vet`'d. We hand-roll the architecture and not one byte of crypto. See [`docs/decisions/001`](docs/decisions/001-ratchet-and-licence.md) for why not libsignal (licence, not safety).
 
@@ -156,6 +190,7 @@ Read [KERNEL.md](KERNEL.md), find a law you can violate, open an issue with the 
 | [IDEA.md](IDEA.md) | what's actually wrong with Signal, WhatsApp, Telegram; threat tiers T0–T8; architecture; roadmap |
 | [KERNEL.md](KERNEL.md) | the signature, the 24 laws, the category, attacks as squares that fail to commute, the language |
 | [TRACE.md](TRACE.md) | law → phase → test → review → screen; MVP acceptance; known gaps |
+| [formal/](formal/README.md) | the policy layer as a Tamarin theory: lemmas, the traces the prover found, what is left out |
 | [OATH.md](OATH.md) | what the humans promise, signed with release keys |
 | [docs/MAINTAINERS.md](docs/MAINTAINERS.md) | hardware keys, builders, no agent holds a credential |
 | [docs/CLI.md](docs/CLI.md) · [docs/MCP.md](docs/MCP.md) · [docs/INTEGRATION.md](docs/INTEGRATION.md) | the three surfaces |
