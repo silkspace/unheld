@@ -85,4 +85,20 @@ pub enum Refuse {
     NoRight,
     #[error("no such member in this group")]
     NotMember,
+    #[error("enrolment request is malformed")]
+    BadRequest,
+    #[error("enrolment is malformed, not for this device, or its certificate does not verify")]
+    BadEnrolment,
+    #[error("this vault is not a device waiting to be enrolled")]
+    NotPending,
+    #[error("a device with this name or key is already enrolled")]
+    DeviceExists,
+    #[error("introduction is not from an enrolled device of this identity")]
+    NotADevice,
+    #[error("no such device")]
+    UnknownDevice,
+    #[error("a device cannot revoke itself; revoke it from another")]
+    ThisDevice,
+    #[error("vault was written by an older build and this one does not read it")]
+    VaultOld,
 }

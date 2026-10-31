@@ -6,12 +6,12 @@
 //! refused over a carrier that does not deliver in order (L19).
 
 use crate::vocab::{MemberTrust, PeerState, Refuse};
-use crate::{config, frame, mls_err, parse_key_package, prefix, Core, GroupRecord};
+use crate::{config, frame, group_config, mls_err, parse_key_package, prefix, Core, GroupRecord};
 use openmls::prelude::*;
 use serde::Serialize;
 use unheld_blob::Blob;
 
-/// One member of a group, as this vault sees them.
+/// One member of a group, as this vault sees them: a person, with however many devices.
 #[derive(Debug, Clone, Serialize)]
 pub struct Member {
     /// A peer's name, or `?` and a key hash for someone you never verified.
@@ -19,6 +19,8 @@ pub struct Member {
     pub trust: MemberTrust,
     pub is_admin: bool,
     pub is_me: bool,
+    /// Leaves this identity holds in the group (L15).
+    pub devices: usize,
 }
 
 /// A group and its roster, with the verification state of every member (L18).
@@ -46,8 +48,8 @@ fn needs_order(members: usize, ordered: bool) -> Result<(), Refuse> {
 }
 
 impl Core {
-    /// How a signature key stands with you: your own name, a peer's name and state, or a
-    /// vouched stranger shown by key hash.
+    /// How an identity stands with you: your own name, a peer's name and state, or a vouched
+    /// stranger shown by key hash.
     pub(crate) fn member_label(&self, key: &[u8]) -> (String, MemberTrust) {
         if let Ok(id) = self.identity() {
             if id.signature_public == key {
@@ -95,7 +97,7 @@ impl Core {
         }
     }
 
-    fn one_part_blob(msg: &MlsMessageOut) -> Result<Blob, Refuse> {
+    pub(crate) fn one_part_blob(msg: &MlsMessageOut) -> Result<Blob, Refuse> {
         let bytes = msg.to_bytes().map_err(mls_err)?;
         Blob::pad(&frame(&[bytes])?).map_err(|_| Refuse::TooLarge)
     }
@@ -113,16 +115,8 @@ impl Core {
         needs_order(members, ordered)?;
         let kps = peers.iter().map(|p| self.admitted_key_package(p)).collect::<Result<Vec<_>, _>>()?;
         let signer = self.signer()?;
-        let cfg = MlsGroupCreateConfig::builder()
-            .ciphersuite(config::mls::CIPHERSUITE)
-            .use_ratchet_tree_extension(true)
-            .sender_ratchet_configuration(SenderRatchetConfiguration::new(
-                config::mls::OUT_OF_ORDER_TOLERANCE,
-                config::mls::MAX_FORWARD_DISTANCE,
-            ))
-            .build();
         let cwk = self.credential_with_key()?;
-        let mut group = MlsGroup::new(&self.provider, &signer, &cfg, cwk).map_err(mls_err)?;
+        let mut group = MlsGroup::new(&self.provider, &signer, &group_config(), cwk).map_err(mls_err)?;
         let (_commit, welcome, _info) = group.add_members(&self.provider, &signer, &kps).map_err(mls_err)?;
         group.merge_pending_commit(&self.provider).map_err(mls_err)?;
         let blob = Self::one_part_blob(&welcome)?;
@@ -145,7 +139,7 @@ impl Core {
             return Err(Refuse::NotAdmin);
         }
         let mut group = self.load_group(&rec)?;
-        needs_order(group.members().count() + 1, ordered)?;
+        needs_order(self.people(&group).len() + 1, ordered)?;
         let kp = self.admitted_key_package(peer)?;
         let signer = self.signer()?;
         let (commit, welcome, _info) = group
@@ -158,8 +152,22 @@ impl Core {
         Ok(added)
     }
 
-    /// `remove`: drop a member by label. The commit goes to the members; the removed one opens
-    /// nothing sealed afterwards (L17).
+    /// The distinct identities in a group, in leaf order; a leaf with no valid certificate counts
+    /// as its own stranger.
+    pub(crate) fn people(&self, group: &MlsGroup) -> Vec<(Vec<u8>, usize)> {
+        let mut out: Vec<(Vec<u8>, usize)> = Vec::new();
+        for m in group.members() {
+            let id = self.member_identity(&m).unwrap_or_else(|| m.signature_key.clone());
+            match out.iter_mut().find(|(k, _)| k == &id) {
+                Some((_, n)) => *n += 1,
+                None => out.push((id, 1)),
+            }
+        }
+        out
+    }
+
+    /// `remove`: drop a member by label, every device of theirs at once. The commit goes to the
+    /// members; the removed one opens nothing sealed afterwards (L17).
     pub fn group_remove(&mut self, name: &str, member: &str) -> Result<Blob, Refuse> {
         let rec = self.group_record(name)?;
         let me = self.identity()?.signature_public.clone();
@@ -167,13 +175,19 @@ impl Core {
             return Err(Refuse::NotAdmin);
         }
         let mut group = self.load_group(&rec)?;
-        let index = group
+        let indices: Vec<LeafNodeIndex> = group
             .members()
-            .find(|m| m.signature_key != me && self.member_label(&m.signature_key).0 == member)
+            .filter(|m| {
+                let id = self.member_identity(m).unwrap_or_else(|| m.signature_key.clone());
+                id != me && self.member_label(&id).0 == member
+            })
             .map(|m| m.index)
-            .ok_or(Refuse::NotMember)?;
+            .collect();
+        if indices.is_empty() {
+            return Err(Refuse::NotMember);
+        }
         let signer = self.signer()?;
-        let (commit, _welcome, _info) = group.remove_members(&self.provider, &signer, &[index]).map_err(mls_err)?;
+        let (commit, _welcome, _info) = group.remove_members(&self.provider, &signer, &indices).map_err(mls_err)?;
         group.merge_pending_commit(&self.provider).map_err(mls_err)?;
         let blob = Self::one_part_blob(&commit)?;
         self.save()?;
@@ -196,11 +210,12 @@ impl Core {
         let rec = self.group_record(name)?;
         let group = self.load_group(&rec)?;
         let me = &self.identity()?.signature_public;
-        let members = group
-            .members()
-            .map(|m| {
-                let (label, trust) = self.member_label(&m.signature_key);
-                Member { label, trust, is_admin: m.signature_key == rec.admin, is_me: &m.signature_key == me }
+        let members = self
+            .people(&group)
+            .into_iter()
+            .map(|(id, devices)| {
+                let (label, trust) = self.member_label(&id);
+                Member { label, trust, is_admin: id == rec.admin, is_me: &id == me, devices }
             })
             .collect();
         Ok(Roster {

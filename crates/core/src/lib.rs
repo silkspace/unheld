@@ -4,14 +4,17 @@
 //! neither plaintext nor key material (KERNEL.md).
 
 pub mod config;
+mod device;
 mod group;
 pub mod vault;
 pub mod vocab;
 
+pub use device::{Attach, Device, Enrolment, Request};
 pub use group::{Member, Roster};
 
 use base64::Engine as _;
 use openmls::prelude::*;
+use device::{leaf_identity, DeviceRecord, PendingDevice};
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use tls_codec::Deserialize as _;
@@ -34,18 +37,38 @@ struct State {
     /// Groups above two, by local name.
     #[serde(default)]
     groups: BTreeMap<String, GroupRecord>,
+    /// A device waiting to be enrolled, before this vault has an identity.
+    #[serde(default)]
+    pending: Option<PendingDevice>,
+    /// Sessions the enrolment announced, so their welcomes land under the right names.
+    #[serde(default)]
+    expected: Vec<(Vec<u8>, Expected)>,
     /// The OpenMLS storage, base64 key and value pairs.
     storage: Vec<(String, String)>,
+}
+
+/// What a session announced at enrolment is.
+#[derive(Serialize, Deserialize, Clone)]
+pub(crate) enum Expected {
+    Pair(String),
+    Group { admin: Vec<u8>, name: String },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 struct IdentityRecord {
     /// The local name. Never leaves the vault.
     name: String,
-    /// Random bytes that stand for this identity inside credentials, so an introduction
-    /// carries no name.
-    credential_id: Vec<u8>,
+    /// The identity key, the one peers verify. Its private half is in the MLS storage.
     signature_public: Vec<u8>,
+    /// This device's key, the one on every leaf this device holds (L15).
+    device_public: Vec<u8>,
+    device_name: String,
+    /// This device's certificate: the content of every credential this device presents.
+    cert: Vec<u8>,
+    /// Every device of this identity, by local name, this one included.
+    devices: BTreeMap<String, DeviceRecord>,
+    /// The session among this identity's devices alone, once there are two.
+    ring: Option<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -128,6 +151,37 @@ impl Opened {
     }
 }
 
+/// One blob and who it is for, when a verb writes to more than one set of readers.
+#[derive(Debug, Clone)]
+pub struct Outbound {
+    pub to: Target,
+    pub blob: Blob,
+}
+
+/// The readers of an outbound blob.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum Target {
+    /// A peer, on the pairwise session.
+    Peer(String),
+    /// Every member of a group.
+    Group(String),
+    /// This identity's other devices.
+    Ring,
+    /// The device just enrolled.
+    Device,
+}
+
+impl Target {
+    /// A short word for the carrier that will hold the blob.
+    pub fn label(&self) -> String {
+        match self {
+            Target::Peer(n) | Target::Group(n) => n.clone(),
+            Target::Ring => "ring".to_owned(),
+            Target::Device => "device".to_owned(),
+        }
+    }
+}
+
 /// An unlocked vault with its MLS provider. Dropping it saves nothing; call `save`.
 pub struct Core {
     provider: OpenMlsRustCrypto,
@@ -144,30 +198,63 @@ fn mls_err<E: std::fmt::Debug>(_e: E) -> Refuse {
     Refuse::Protocol
 }
 
+/// How every session is created: ratchet tree in the welcome, bounded out-of-order tolerance (L13).
+pub(crate) fn group_config() -> MlsGroupCreateConfig {
+    MlsGroupCreateConfig::builder()
+        .ciphersuite(config::mls::CIPHERSUITE)
+        .use_ratchet_tree_extension(true)
+        .sender_ratchet_configuration(SenderRatchetConfiguration::new(
+            config::mls::OUT_OF_ORDER_TOLERANCE,
+            config::mls::MAX_FORWARD_DISTANCE,
+        ))
+        .build()
+}
+
+fn join_config() -> MlsGroupJoinConfig {
+    MlsGroupJoinConfig::builder()
+        .use_ratchet_tree_extension(true)
+        .sender_ratchet_configuration(SenderRatchetConfiguration::new(
+            config::mls::OUT_OF_ORDER_TOLERANCE,
+            config::mls::MAX_FORWARD_DISTANCE,
+        ))
+        .build()
+}
+
 impl Core {
-    /// `gen`: create a vault with a fresh identity. Refuses if one exists.
-    pub fn create(dir: &Path, passphrase: &str, name: &str) -> Result<Core, Refuse> {
+    /// A vault with nothing in it yet. Refuses if one exists.
+    fn empty(dir: &Path, passphrase: &str) -> Result<Core, Refuse> {
         std::fs::create_dir_all(dir).map_err(|_| Refuse::VaultIo)?;
         let path = vault_path(dir);
         if path.exists() {
             return Err(Refuse::IdentityExists);
         }
-        let provider = OpenMlsRustCrypto::default();
-        let signer = SignatureKeyPair::new(config::mls::CIPHERSUITE.signature_algorithm())
-            .map_err(mls_err)?;
-        signer.store(provider.storage()).map_err(mls_err)?;
-        let mut credential_id = vec![0u8; config::identity::CREDENTIAL_ID_LEN];
-        rand::RngCore::fill_bytes(&mut rand::rng(), &mut credential_id);
-        let state = State {
-            version: config::vault::FORMAT_VERSION,
-            identity: Some(IdentityRecord {
-                name: name.to_owned(),
-                credential_id,
-                signature_public: signer.to_public_vec(),
-            }),
-            ..State::default()
-        };
-        let mut core = Core { provider, state, path, passphrase: passphrase.to_owned() };
+        let state = State { version: config::vault::FORMAT_VERSION, ..State::default() };
+        Ok(Core { provider: OpenMlsRustCrypto::default(), state, path, passphrase: passphrase.to_owned() })
+    }
+
+    /// `gen`: create a vault with a fresh identity on its first device. Refuses if one exists.
+    pub fn create(dir: &Path, passphrase: &str, name: &str) -> Result<Core, Refuse> {
+        let mut core = Core::empty(dir, passphrase)?;
+        let identity = SignatureKeyPair::new(config::mls::CIPHERSUITE.signature_algorithm()).map_err(mls_err)?;
+        identity.store(core.provider.storage()).map_err(mls_err)?;
+        let device = SignatureKeyPair::new(config::mls::CIPHERSUITE.signature_algorithm()).map_err(mls_err)?;
+        device.store(core.provider.storage()).map_err(mls_err)?;
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let cert = device::Cert::issue(&identity, device.public(), now)?;
+        let mut devices = BTreeMap::new();
+        devices.insert(
+            config::device::FIRST_NAME.to_owned(),
+            DeviceRecord { public: device.to_public_vec(), enrolled_at: cert.enrolled_at, revoked: false },
+        );
+        core.state.identity = Some(IdentityRecord {
+            name: name.to_owned(),
+            signature_public: identity.to_public_vec(),
+            device_public: device.to_public_vec(),
+            device_name: config::device::FIRST_NAME.to_owned(),
+            cert: cert.encode(),
+            devices,
+            ring: None,
+        });
         core.save()?;
         Ok(core)
     }
@@ -188,6 +275,10 @@ impl Core {
                 return Err(e);
             }
         };
+        let version: VersionOnly = serde_json::from_slice(&plain).map_err(|_| Refuse::VaultLocked)?;
+        if version.version < config::vault::FORMAT_VERSION {
+            return Err(Refuse::VaultOld);
+        }
         let state: State = serde_json::from_slice(&plain).map_err(|_| Refuse::VaultLocked)?;
         if state.version > config::vault::FORMAT_VERSION {
             return Err(Refuse::VaultLocked);
@@ -222,22 +313,47 @@ impl Core {
         self.state.identity.as_ref().ok_or(Refuse::NoIdentity)
     }
 
+    /// This device's key: what signs every leaf and every message this device sends.
     fn signer(&self) -> Result<SignatureKeyPair, Refuse> {
         let id = self.identity()?;
-        SignatureKeyPair::read(
-            self.provider.storage(),
-            &id.signature_public,
-            config::mls::CIPHERSUITE.signature_algorithm(),
-        )
-        .ok_or(Refuse::NoIdentity)
+        SignatureKeyPair::read(self.provider.storage(), &id.device_public, config::mls::CIPHERSUITE.signature_algorithm())
+            .ok_or(Refuse::NoIdentity)
     }
 
+    /// The identity key: what signs device certificates and nothing else.
+    fn identity_signer(&self) -> Result<SignatureKeyPair, Refuse> {
+        let id = self.identity()?;
+        SignatureKeyPair::read(self.provider.storage(), &id.signature_public, config::mls::CIPHERSUITE.signature_algorithm())
+            .ok_or(Refuse::NoIdentity)
+    }
+
+    /// This device's credential: its certificate under the identity key, and its own key.
     fn credential_with_key(&self) -> Result<CredentialWithKey, Refuse> {
         let id = self.identity()?;
         Ok(CredentialWithKey {
-            credential: BasicCredential::new(id.credential_id.clone()).into(),
-            signature_key: id.signature_public.clone().into(),
+            credential: BasicCredential::new(id.cert.clone()).into(),
+            signature_key: id.device_public.clone().into(),
         })
+    }
+
+    /// A fresh key package, serialised.
+    fn key_package_bytes(&self) -> Result<Vec<u8>, Refuse> {
+        let signer = self.signer()?;
+        let cwk = self.credential_with_key()?;
+        let bundle = KeyPackage::builder().build(config::mls::CIPHERSUITE, &self.provider, &signer, cwk).map_err(mls_err)?;
+        let out: MlsMessageOut = bundle.into();
+        out.to_bytes().map_err(mls_err)
+    }
+
+    fn load_gid(&self, gid: &[u8]) -> Result<MlsGroup, Refuse> {
+        MlsGroup::load(self.provider.storage(), &GroupId::from_slice(gid))
+            .map_err(mls_err)?
+            .ok_or(Refuse::UnknownSession)
+    }
+
+    /// The identity a group member belongs to, if their certificate holds.
+    pub(crate) fn member_identity(&self, m: &openmls::prelude::Member) -> Option<Vec<u8>> {
+        leaf_identity(&self.provider, &m.credential, &m.signature_key)
     }
 
     pub fn name(&self) -> Result<&str, Refuse> {
@@ -251,21 +367,18 @@ impl Core {
 
     /// `intro`: a fresh signed key package to hand over out of band.
     pub fn intro(&mut self) -> Result<Intro, Refuse> {
-        let signer = self.signer()?;
-        let cwk = self.credential_with_key()?;
-        let bundle = KeyPackage::builder()
-            .build(config::mls::CIPHERSUITE, &self.provider, &signer, cwk)
-            .map_err(mls_err)?;
-        let out: MlsMessageOut = bundle.into();
-        let bytes = out.to_bytes().map_err(mls_err)?;
+        let bytes = self.key_package_bytes()?;
         self.save()?;
         Ok(Intro(bytes))
     }
 
-    /// Stage a peer from their introduction. The peer is `Pending` until `verify`.
+    /// Stage a peer from their introduction. The peer is `Pending` until `verify`. The identity
+    /// staged is the one the introduction's device certificate names, and the certificate must
+    /// hold, so a peer is a person and not one of their devices.
     pub fn import(&mut self, name: &str, intro: &Intro) -> Result<Peer, Refuse> {
         let kp = parse_key_package(&self.provider, &intro.0)?;
-        let their_pub = kp.leaf_node().signature_key().as_slice().to_vec();
+        let leaf = kp.leaf_node();
+        let their_pub = leaf_identity(&self.provider, leaf.credential(), leaf.signature_key().as_slice()).ok_or(Refuse::BadIntro)?;
         let state = match self.state.peers.get(name) {
             Some(existing) if existing.signature_public != their_pub => PeerState::Changed,
             Some(existing) => existing.state,
@@ -344,16 +457,8 @@ impl Core {
             None => {
                 let intro = rec.intro.as_ref().ok_or(Refuse::NoIntro)?;
                 let kp = parse_key_package(&self.provider, intro)?;
-                let cfg = MlsGroupCreateConfig::builder()
-                    .ciphersuite(config::mls::CIPHERSUITE)
-                    .use_ratchet_tree_extension(true)
-                    .sender_ratchet_configuration(SenderRatchetConfiguration::new(
-                        config::mls::OUT_OF_ORDER_TOLERANCE,
-                        config::mls::MAX_FORWARD_DISTANCE,
-                    ))
-                    .build();
                 let cwk = self.credential_with_key()?;
-                let mut group = MlsGroup::new(&self.provider, &signer, &cfg, cwk).map_err(mls_err)?;
+                let mut group = MlsGroup::new(&self.provider, &signer, &group_config(), cwk).map_err(mls_err)?;
                 let (_commit, welcome, _info) = group
                     .add_members(&self.provider, &signer, core::slice::from_ref(&kp))
                     .map_err(mls_err)?;
@@ -394,33 +499,38 @@ impl Core {
         Ok(opened)
     }
 
-    /// Join from a welcome. Its sender must be a peer you verified (L3, L16); otherwise the group
-    /// is deleted and nothing is kept. Two members is a session with that peer; more is a group.
+    /// Join from a welcome. Its sender must be a peer you verified (L3, L16), or another device
+    /// of your own identity bringing this one in; otherwise the group is deleted and nothing is
+    /// kept. Two identities is a session with that peer; more is a group.
     fn join(&mut self, welcome: Welcome) -> Result<Opened, Refuse> {
-        let cfg = MlsGroupJoinConfig::builder()
-            .use_ratchet_tree_extension(true)
-            .sender_ratchet_configuration(SenderRatchetConfiguration::new(
-                config::mls::OUT_OF_ORDER_TOLERANCE,
-                config::mls::MAX_FORWARD_DISTANCE,
-            ))
-            .build();
-        let staged = StagedWelcome::new_from_welcome(&self.provider, &cfg, welcome, None)
+        let staged = StagedWelcome::new_from_welcome(&self.provider, &join_config(), welcome, None)
             .map_err(|e| match e {
                 WelcomeError::NoMatchingKeyPackage | WelcomeError::NoMatchingEncryptionKey => Refuse::Replay,
                 _ => Refuse::Protocol,
             })?;
-        let sender_key = staged.welcome_sender().map_err(mls_err)?.signature_key().as_slice().to_vec();
-        let members = staged.members().count();
+        let sender_leaf = staged.welcome_sender().map_err(mls_err)?;
+        let sender_identity = leaf_identity(&self.provider, sender_leaf.credential(), sender_leaf.signature_key().as_slice());
         let mut group = staged.into_group(&self.provider).map_err(mls_err)?;
-        let Some(sender) = self.verified_peer(&sender_key) else {
+        let gid = group.group_id().as_slice().to_vec();
+        let me = self.identity()?.signature_public.clone();
+        // Everyone in the room, by identity; a leaf with no valid certificate belongs to nobody.
+        let identities: Vec<Option<Vec<u8>>> = group.members().map(|m| self.member_identity(&m)).collect();
+        if sender_identity.as_deref() == Some(me.as_slice()) {
+            return self.join_as_device(group, gid, identities);
+        }
+        let Some(sender) = sender_identity.as_deref().and_then(|k| self.verified_peer(k)) else {
             group.delete(self.provider.storage()).map_err(mls_err)?;
             return Err(Refuse::UnknownSender);
         };
-        let gid = group.group_id().as_slice().to_vec();
+        let sender_key = sender_identity.unwrap_or_default();
+        let mut distinct: Vec<Option<Vec<u8>>> = identities.clone();
+        distinct.sort();
+        distinct.dedup();
+        let members = distinct.len();
         if members >= config::group::MIN_MEMBERS {
             let local = format!("{}{}", config::group::JOINED_NAME_PREFIX, prefix(&gid));
             self.state.groups.insert(local.clone(), GroupRecord { group_id: gid, admin: sender_key });
-            let unverified = group.members().filter(|m| self.member_label(&m.signature_key).1 == MemberTrust::Vouched).count();
+            let unverified = distinct.iter().filter(|k| self.member_label(k.as_deref().unwrap_or_default()).1 == MemberTrust::Vouched).count();
             return Ok(Opened {
                 from: sender.clone(),
                 trust: MemberTrust::Verified,
@@ -437,10 +547,62 @@ impl Core {
         Ok(Opened::pairwise(sender, Vec::new(), true))
     }
 
-    /// Where a group id lives: a pairwise session with a peer, or a named group.
+    /// A welcome from another device of this identity: the ring, or a session that device is in
+    /// and announced at enrolment. A session it did not announce is placed by its roster when
+    /// that is unambiguous, and refused otherwise.
+    fn join_as_device(&mut self, mut group: MlsGroup, gid: Vec<u8>, identities: Vec<Option<Vec<u8>>>) -> Result<Opened, Refuse> {
+        let me = self.identity()?.signature_public.clone();
+        let mut others: Vec<Vec<u8>> = identities.into_iter().flatten().filter(|k| k != &me).collect();
+        others.sort();
+        others.dedup();
+        let device_name = self.identity()?.device_name.clone();
+        let expected = self.expected(&gid);
+        let (place, text) = match expected {
+            Some(Expected::Pair(name)) if self.state.peers.contains_key(&name) => (Expected::Pair(name.clone()), format!("your session with {name} now reaches {device_name}")),
+            Some(Expected::Group { admin, name }) => (Expected::Group { admin, name: name.clone() }, format!("the group {name} now reaches {device_name}")),
+            _ if others.is_empty() => {
+                if let Some(id) = self.state.identity.as_mut() {
+                    id.ring = Some(gid);
+                }
+                return Ok(Opened { from: device_name.clone(), trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(format!("{device_name} is now a device of this identity")) });
+            }
+            _ if others.len() == 1 => match self.verified_peer(&others[0]) {
+                Some(name) => (Expected::Pair(name.clone()), format!("your session with {name} now reaches {device_name}")),
+                None => {
+                    group.delete(self.provider.storage()).map_err(mls_err)?;
+                    return Err(Refuse::UnknownSender);
+                }
+            },
+            _ => {
+                group.delete(self.provider.storage()).map_err(mls_err)?;
+                return Err(Refuse::UnknownSender);
+            }
+        };
+        match place {
+            Expected::Pair(name) => {
+                if let Some(r) = self.state.peers.get_mut(&name) {
+                    r.groups.push(gid);
+                }
+            }
+            Expected::Group { admin, name } => {
+                let local = if self.state.groups.contains_key(&name) || self.state.peers.contains_key(&name) {
+                    format!("{}{}", config::group::JOINED_NAME_PREFIX, prefix(&gid))
+                } else {
+                    name
+                };
+                self.state.groups.insert(local, GroupRecord { group_id: gid, admin });
+            }
+        }
+        Ok(Opened { from: device_name, trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(text) })
+    }
+
+    /// Where a group id lives: a pairwise session with a peer, a named group, or the ring.
     fn locate(&self, gid: &[u8]) -> Option<Located> {
         if let Some((n, _)) = self.state.peers.iter().find(|(_, p)| p.groups.iter().any(|g| g == gid)) {
             return Some(Located::Pair(n.clone()));
+        }
+        if self.identity().ok().and_then(|i| i.ring.as_deref()) == Some(gid) {
+            return Some(Located::Ring);
         }
         self.state
             .groups
@@ -449,112 +611,145 @@ impl Core {
             .map(|(n, g)| Located::Group(n.clone(), g.clone()))
     }
 
-    /// The name of a verified peer holding this signature key.
-    fn verified_peer(&self, key: &[u8]) -> Option<String> {
+    /// The name of a verified peer whose identity this is.
+    fn verified_peer(&self, identity: &[u8]) -> Option<String> {
         self.state
             .peers
             .iter()
-            .find(|(_, p)| p.signature_public == key && p.state == PeerState::Verified)
+            .find(|(_, p)| p.signature_public == identity && p.state == PeerState::Verified)
             .map(|(n, _)| n.clone())
     }
 
-    /// Process one message on a session or a group. A commit that changes a roster is merged
-    /// only when its sender holds the right (L16); otherwise it is refused and nothing moves.
+    /// Process one message on a session, a group or the ring. A commit that changes a roster is
+    /// merged only when its sender holds the right (L16): the admin may change anything, and any
+    /// member may add or remove devices of their own identity, which changes no roster of people.
+    /// Otherwise it is refused and nothing moves.
     fn receive(&mut self, pm: ProtocolMessage) -> Result<Option<Opened>, Refuse> {
         let gid = pm.group_id().as_slice().to_vec();
         let located = self.locate(&gid).ok_or(Refuse::UnknownSession)?;
-        let mut group = MlsGroup::load(self.provider.storage(), &GroupId::from_slice(&gid))
-            .map_err(mls_err)?
-            .ok_or(Refuse::UnknownSession)?;
+        let mut group = self.load_gid(&gid)?;
         let processed = group
             .process_message(&self.provider, pm)
             .map_err(|e| match e {
                 ProcessMessageError::ValidationError(ValidationError::UnableToDecrypt(_)) => Refuse::Replay,
                 _ => Refuse::Protocol,
             })?;
-        let sender_key = match processed.sender() {
-            Sender::Member(idx) => group
-                .member_at(*idx)
-                .map(|m| m.signature_key)
-                .ok_or(Refuse::UnknownSender)?,
+        let sender = match processed.sender() {
+            Sender::Member(idx) => group.member_at(*idx).ok_or(Refuse::UnknownSender)?,
             _ => return Err(Refuse::UnknownSender),
         };
-        match located {
+        let sender_identity = self.member_identity(&sender).ok_or(Refuse::UnknownSender)?;
+        let me = self.identity()?.signature_public.clone();
+        let (from, trust) = self.member_label(&sender_identity);
+        let (group_name, admin) = match &located {
             Located::Pair(name) => {
-                let known = self.state.peers.get(&name).ok_or(Refuse::UnknownPeer)?;
-                if known.signature_public != sender_key || known.state != PeerState::Verified {
+                let known = self.state.peers.get(name).ok_or(Refuse::UnknownPeer)?;
+                let is_peer = known.signature_public == sender_identity && known.state == PeerState::Verified;
+                if !is_peer && sender_identity != me {
                     return Err(Refuse::UnknownSender);
                 }
-                match processed.into_content() {
-                    ProcessedMessageContent::ApplicationMessage(app) => {
-                        Ok(Some(Opened::pairwise(name, app.into_bytes(), false)))
+                (None, None)
+            }
+            Located::Ring => {
+                if sender_identity != me {
+                    return Err(Refuse::UnknownSender);
+                }
+                (None, Some(me.clone()))
+            }
+            Located::Group(gname, rec) => (Some(gname.clone()), Some(rec.admin.clone())),
+        };
+        let vouched_by = match (&located, trust) {
+            (Located::Group(_, rec), MemberTrust::Vouched) => Some(self.member_label(&rec.admin).0),
+            _ => None,
+        };
+        match processed.into_content() {
+            ProcessedMessageContent::ApplicationMessage(app) => {
+                if matches!(located, Located::Ring) {
+                    return Ok(None);
+                }
+                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body: app.into_bytes(), session_started: false, change: None }))
+            }
+            ProcessedMessageContent::StagedCommitMessage(commit) => {
+                // Who comes and goes, by identity, before anything is merged.
+                let added: Vec<Vec<u8>> = commit
+                    .add_proposals()
+                    .map(|a| {
+                        let leaf = a.add_proposal().key_package().leaf_node();
+                        leaf_identity(&self.provider, leaf.credential(), leaf.signature_key().as_slice()).unwrap_or_default()
+                    })
+                    .collect();
+                let removed: Vec<Vec<u8>> = commit
+                    .remove_proposals()
+                    .filter_map(|r| group.member_at(r.remove_proposal().removed()))
+                    .map(|m| self.member_identity(&m).unwrap_or_default())
+                    .collect();
+                let own_devices_only = added.iter().chain(&removed).all(|k| k == &sender_identity);
+                let people_change = !own_devices_only;
+                let is_admin = admin.as_deref() == Some(sender_identity.as_slice());
+                if people_change && (!is_admin || matches!(located, Located::Pair(_))) {
+                    return Err(Refuse::NoRight);
+                }
+                let me_removed = commit.self_removed();
+                group.merge_staged_commit(&self.provider, *commit).map_err(mls_err)?;
+                let still_here = group.members().any(|m| self.member_identity(&m).as_deref() == Some(me.as_slice()));
+                let where_ = group_name.clone().map(|g| format!(" in {g}")).unwrap_or_default();
+                let change = if me_removed && sender_identity == me {
+                    group.delete(self.provider.storage()).map_err(mls_err)?;
+                    self.drop_session(&located);
+                    format!("another device of yours revoked this one{where_}; those keys are deleted")
+                } else if me_removed && !still_here {
+                    group.delete(self.provider.storage()).map_err(mls_err)?;
+                    self.drop_session(&located);
+                    format!("{from} removed you{where_}; its keys are deleted")
+                } else if me_removed {
+                    group.delete(self.provider.storage()).map_err(mls_err)?;
+                    self.drop_session(&located);
+                    format!("{from} removed this device{where_}; your other devices stay")
+                } else if own_devices_only && (!added.is_empty() || !removed.is_empty()) {
+                    let mut parts = Vec::new();
+                    if !added.is_empty() {
+                        parts.push(format!("added {} device{}", added.len(), if added.len() == 1 { "" } else { "s" }));
                     }
-                    ProcessedMessageContent::StagedCommitMessage(commit) => {
-                        if commit.add_proposals().next().is_some() || commit.remove_proposals().next().is_some() {
-                            return Err(Refuse::NoRight);
-                        }
-                        group.merge_staged_commit(&self.provider, *commit).map_err(mls_err)?;
-                        Ok(None)
+                    if !removed.is_empty() {
+                        parts.push(format!("removed {} device{}", removed.len(), if removed.len() == 1 { "" } else { "s" }));
                     }
-                    _ => Ok(None),
+                    format!("{from} {}{where_}", parts.join(" and "))
+                } else if people_change {
+                    let names = |ks: &[Vec<u8>]| ks.iter().map(|k| self.member_label(k).0).collect::<Vec<_>>().join(", ");
+                    let mut parts = Vec::new();
+                    if !added.is_empty() {
+                        parts.push(format!("added {}", names(&added)));
+                    }
+                    if !removed.is_empty() {
+                        parts.push(format!("removed {}", names(&removed)));
+                    }
+                    format!("{from} {}{where_}", parts.join(" and "))
+                } else {
+                    format!("{from} refreshed their keys{where_}")
+                };
+                if matches!(located, Located::Ring) {
+                    return Ok(None);
+                }
+                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body: Vec::new(), session_started: false, change: Some(change) }))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Forget where a session lived once its keys are gone.
+    fn drop_session(&mut self, located: &Located) {
+        match located {
+            Located::Pair(name) => {
+                if let Some(r) = self.state.peers.get_mut(name) {
+                    r.groups.retain(|_| false);
                 }
             }
-            Located::Group(gname, rec) => {
-                let (from, trust) = self.member_label(&sender_key);
-                let vouched_by = (trust == MemberTrust::Vouched).then(|| self.member_label(&rec.admin).0);
-                match processed.into_content() {
-                    ProcessedMessageContent::ApplicationMessage(app) => Ok(Some(Opened {
-                        from,
-                        trust,
-                        vouched_by,
-                        group: Some(gname),
-                        body: app.into_bytes(),
-                        session_started: false,
-                        change: None,
-                    })),
-                    ProcessedMessageContent::StagedCommitMessage(commit) => {
-                        let added: Vec<String> = commit
-                            .add_proposals()
-                            .map(|a| self.member_label(a.add_proposal().key_package().leaf_node().signature_key().as_slice()).0)
-                            .collect();
-                        let removed: Vec<String> = commit
-                            .remove_proposals()
-                            .filter_map(|r| group.member_at(r.remove_proposal().removed()))
-                            .map(|m| self.member_label(&m.signature_key).0)
-                            .collect();
-                        let changes_roster = !added.is_empty() || !removed.is_empty();
-                        if changes_roster && sender_key != rec.admin {
-                            return Err(Refuse::NoRight);
-                        }
-                        let me_removed = commit.self_removed();
-                        group.merge_staged_commit(&self.provider, *commit).map_err(mls_err)?;
-                        let change = if me_removed {
-                            group.delete(self.provider.storage()).map_err(mls_err)?;
-                            self.state.groups.remove(&gname);
-                            format!("{from} removed you from {gname}; its keys are deleted")
-                        } else if changes_roster {
-                            let mut parts = Vec::new();
-                            if !added.is_empty() {
-                                parts.push(format!("added {}", added.join(", ")));
-                            }
-                            if !removed.is_empty() {
-                                parts.push(format!("removed {}", removed.join(", ")));
-                            }
-                            format!("{from} {} in {gname}", parts.join(" and "))
-                        } else {
-                            format!("{from} refreshed their keys in {gname}")
-                        };
-                        Ok(Some(Opened {
-                            from,
-                            trust,
-                            vouched_by,
-                            group: Some(gname),
-                            body: Vec::new(),
-                            session_started: false,
-                            change: Some(change),
-                        }))
-                    }
-                    _ => Ok(None),
+            Located::Group(gname, _) => {
+                self.state.groups.remove(gname);
+            }
+            Located::Ring => {
+                if let Some(i) = self.state.identity.as_mut() {
+                    i.ring = None;
                 }
             }
         }
@@ -565,6 +760,14 @@ impl Core {
 enum Located {
     Pair(String),
     Group(String, GroupRecord),
+    Ring,
+}
+
+/// Enough of a vault to read its format version before the rest is parsed.
+#[derive(Deserialize)]
+struct VersionOnly {
+    #[serde(default)]
+    version: u32,
 }
 
 /// What an outsider can read from one part of a blob without any key.
@@ -701,16 +904,21 @@ fn parse_key_package(provider: &OpenMlsRustCrypto, bytes: &[u8]) -> Result<KeyPa
 /// Pairwise fingerprint over both public keys in canonical order, as decimal digits.
 fn pairwise(a: &[u8], b: &[u8]) -> Fingerprint {
     let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    digits_of(config::fp::DOMAIN, &[lo, hi])
+}
+
+/// Spoken digits over a domain and some keys, uniform by rejection sampling.
+pub(crate) fn digits_of(domain: &[u8], keys: &[&[u8]]) -> Fingerprint {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(config::fp::DOMAIN);
-    hasher.update(lo);
-    hasher.update(hi);
+    hasher.update(domain);
+    for k in keys {
+        hasher.update(k);
+    }
     let mut reader = hasher.finalize_xof();
     let mut digits = String::with_capacity(config::fp::DIGITS);
     let mut buf = [0u8; 1];
     while digits.len() < config::fp::DIGITS {
         reader.fill(&mut buf);
-        // Rejection sampling keeps the digits uniform.
         if buf[0] < 250 {
             digits.push(char::from(b'0' + buf[0] % 10));
         }

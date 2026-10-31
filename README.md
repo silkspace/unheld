@@ -80,6 +80,33 @@ g-bd68bc2320 epoch 1  admin me
 
 `you` never met `them`, and the client says so every time, including before every `group send`. `group add team more -c file:/tmp/c -w file:/tmp/wm` writes a commit for the members and a welcome for the newcomer; `group remove team them -c file:/tmp/r` writes a commit everyone opens as a line saying who removed whom, after which `them` opens nothing further. Only the one who started the group changes its roster, and every other client refuses a roster change from anyone else before merging it. Above eight people the file, clipboard and pipe carriers are refused, because they cannot order commits, which is the whole reason large groups usually need a server.
 
+A second device is a second profile here. On it, `devices request` makes a vault and prints a request and sixty digits; on the first, `devices enroll phone <request>` prints the digits the request's key makes and asks whether the new device shows exactly them:
+
+```bash
+u --profile phone devices request > /tmp/req                   # on the new device
+u --profile me    devices enroll phone /tmp/req > /tmp/enrol    # on a device that is you: compare, then `yes`
+u --profile phone devices join /tmp/enrol > /tmp/attach         # the phone becomes you
+u --profile me    devices connect /tmp/attach -c dir:/tmp/out   # one commit per session, one blob for the phone
+u --profile you   open -c file:/tmp/out/you.blob
+u --profile phone open -c file:/tmp/out/device.blob
+```
+
+```
+this device shows (the device that enrols you must show the same digits)
+
+  39817 93856 79539 54586 05372 88161 76648 31771 82941 50534 74928 89249
+
+the new device must show exactly phone
+
+  39817 93856 79539 54586 05372 88161 76648 31771 82941 50534 74928 89249
+
+· me added 1 device
+· phone is now a device of this identity
+· your session with you now reaches phone
+```
+
+From here `you` reads one person with two devices, both open what `you` sends, and what the phone sends arrives as `me ›`. `u --profile me devices revoke phone -c dir:/tmp/rev` writes one commit per session, `you` opens it as `me removed 1 device`, and the phone opens its copy as `another device of yours revoked this one; those keys are deleted` and nothing after. A request that the witness cannot match to a screen is the 2025 linked-device attack, and it is what the default `no` is for.
+
 Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte blob (type the message, Enter, then Ctrl-D), and `-c clipboard` puts it on the clipboard so you can paste it into any chat and `open -c clipboard` on the other side. Paste the file into a note or a chat to yourself: that is everything any carrier ever sees, and `u inspect -c file:/tmp/blob` shows exactly what. `u --profile you open -c file:/tmp/blob` reads it, a second open is refused as a replay, and one changed character is refused as malformed. `strings ~/.unheld/me/vault | grep -c hello` prints `0`, and the file has no header or magic bytes at all, so nothing identifies it as a vault. Every command needs `--profile`, because the profile is which of you is speaking. `rm -rf ~/.unheld/me ~/.unheld/you` deletes both identities completely, since nothing about them exists anywhere else.
 
 ## the laws
@@ -92,7 +119,7 @@ Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte bl
 | L3 | no skip | no `Peer` without a matched pairwise fingerprint |
 | L14 | key change blocks | `Changed` peer ⇒ `seal` is `Refuse` |
 | L15 | enrolment needs a witness | new device confirmed on an old device, fingerprint shown |
-| L16 | no ghost | roster change ⇒ signed by a verified member ⇒ shown to all |
+| L16 | no ghost | roster change ⇒ signed by a verified member ⇒ shown to all; a device change is not one |
 
 [TRACE.md](TRACE.md) maps every law to a phase, a test, a review layer and the screen where you see it. Rows with gaps say so.
 
@@ -111,10 +138,10 @@ The prover earned its keep before anything was proved: two drafts of the welcome
 
 ## status
 
-Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe or the clipboard with Messaging Layer Security underneath and an Argon2id-locked vault at rest. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
+Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe or the clipboard with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
-cargo test --workspace            # 21 tests: laws L1, L3, L4, L8, L10, L11, L14, L16 to L19 and the crate graph
+cargo test --workspace            # 24 tests: laws L1, L3, L4, L8, L10, L11, L14 to L19 and the crate graph
 ./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
 ./scripts/demo.sh                 # two vaults, one file carrier, every refusal shown live
 ```
@@ -171,7 +198,7 @@ no plaintext in vault
 
 </details>
 
-Not yet: property tests per law, the ordered relay for large groups, devices, rotation, recovery, reproducible builds, the log. See TRACE.md for which rows are green.
+Not yet: property tests per law, the ordered relay for large groups, rotation, recovery, reproducible builds, the log. See TRACE.md for which rows are green.
 
 Primitives are never written here. Ratchet: [OpenMLS](https://github.com/openmls/openmls). Tor: [Arti](https://gitlab.torproject.org/tpo/core/arti). Everything else: RustCrypto, pinned, `cargo vet`'d. We hand-roll the architecture and not one byte of crypto. See [`docs/decisions/001`](docs/decisions/001-ratchet-and-licence.md) for why not libsignal (licence, not safety).
 

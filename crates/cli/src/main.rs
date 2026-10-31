@@ -11,7 +11,7 @@ use unheld_blob::Carrier;
 use unheld_carriers::{ClipboardCarrier, FileCarrier, StdioCarrier};
 use unheld_core::config;
 use unheld_core::vocab::Refuse;
-use unheld_core::{Core, Intro};
+use unheld_core::{Attach, Core, Enrolment, Intro, Outbound, Request};
 
 #[derive(Parser)]
 #[command(name = "unheld", about = "Messaging where nobody but the two of you holds a key.")]
@@ -64,6 +64,11 @@ enum Cmd {
     Group {
         #[command(subcommand)]
         cmd: GroupCmd,
+    },
+    /// Devices of one identity: enrol a new one with a witness, bring it into every session, revoke.
+    Devices {
+        #[command(subcommand)]
+        cmd: DeviceCmd,
     },
     /// End every session with a peer, or leave a group, and delete the keys; a peer stays verified.
     Forget { name: String },
@@ -128,6 +133,31 @@ enum GroupCmd {
     List,
     /// Give a group a different local name; names never leave the vault.
     Rename { group: String, new_name: String },
+}
+
+#[derive(Subcommand)]
+enum DeviceCmd {
+    /// Every device of this identity, with the one you are on marked.
+    List,
+    /// On a new device with no vault yet: create one and print the request for a device that has the identity.
+    Request,
+    /// On a device that has the identity: read a request from a file or `-`, show its digits, ask, and print the enrolment.
+    Enroll { name: String, request: String },
+    /// On the new device: read the enrolment from a file or `-`, become the identity, and print what to hand back.
+    Join { enrolment: String },
+    /// On the witness: read what the new device handed back and write one blob per session, and one for the device.
+    Connect {
+        attach: String,
+        /// Where the blobs go: `dir:<path>` writes one file per reader, `stdout` prints them in turn.
+        #[arg(short, long, default_value = "stdout")]
+        carrier: String,
+    },
+    /// Drop a device from every session. Its holder opens nothing sealed from here on.
+    Revoke {
+        name: String,
+        #[arg(short, long, default_value = "stdout")]
+        carrier: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -271,7 +301,8 @@ fn run(cli: Cli) -> Result<(), Refuse> {
         }
         Cmd::Id { cmd: IdCmd::Show } => {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
-            println!("{}  {}  {}", style::name(core.name()?), style::hash(&core.own_fingerprint_prefix()?), style::dim(&dir.display().to_string()));
+            let this = core.devices()?.into_iter().find(|d| d.is_this).map(|d| d.name).unwrap_or_default();
+            println!("{}  {}  {}  {}", style::name(core.name()?), style::hash(&core.own_fingerprint_prefix()?), style::dim(&format!("device {this}")), style::dim(&dir.display().to_string()));
         }
         Cmd::Intro { cmd: IntroCmd::Export { qr } } => {
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
@@ -386,6 +417,7 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             }
         }
         Cmd::Group { cmd } => group_cmd(cmd, &dir, cli.json)?,
+        Cmd::Devices { cmd } => device_cmd(cmd, &dir, cli.json)?,
         Cmd::Duress => {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
             let d = rpassword::prompt_password("duress passphrase: ").map_err(|_| Refuse::VaultIo)?;
@@ -438,6 +470,100 @@ fn run(cli: Cli) -> Result<(), Refuse> {
     Ok(())
 }
 
+/// Text handed over by hand: a file path, or `-` for stdin.
+fn read_text(source: &str) -> Result<String, Refuse> {
+    if source == "-" {
+        String::from_utf8(read_stdin()?).map_err(|_| Refuse::BadIntro)
+    } else {
+        std::fs::read_to_string(source).map_err(|_| Refuse::VaultIo)
+    }
+}
+
+/// Several blobs for several readers: `dir:<path>` writes `<reader>.blob` in that directory,
+/// `stdout` prints each after a line naming its reader on stderr.
+fn put_many(spec: &str, outs: &[Outbound]) -> Result<(), Refuse> {
+    match spec.split_once(':') {
+        Some(("dir", path)) => {
+            std::fs::create_dir_all(path).map_err(|_| Refuse::CarrierIo)?;
+            for o in outs {
+                let file = Path::new(path).join(format!("{}.blob", o.to.label()));
+                FileCarrier::new(file.display().to_string()).put(&o.blob).map_err(|_| Refuse::CarrierIo)?;
+                eprintln!("{} {}", style::ok("✓"), style::dim(&format!("for {}: {} bytes into {}", o.to.label(), o.blob.len(), file.display())));
+            }
+            Ok(())
+        }
+        None if spec == "stdout" => {
+            for o in outs {
+                eprintln!("{}", style::dim(&format!("· for {}:", o.to.label())));
+                StdioCarrier.put(&o.blob).map_err(|_| Refuse::CarrierIo)?;
+            }
+            Ok(())
+        }
+        _ => Err(Refuse::CarrierIo),
+    }
+}
+
+fn device_cmd(cmd: DeviceCmd, dir: &Path, json: bool) -> Result<(), Refuse> {
+    match cmd {
+        DeviceCmd::List => {
+            let core = Core::unlock(dir, &passphrase(false)?)?;
+            let ds = core.devices()?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&ds).map_err(|_| Refuse::Protocol)?);
+            } else {
+                for d in &ds {
+                    let note = match (d.is_this, d.revoked) {
+                        (true, _) => "this device".to_owned(),
+                        (_, true) => "revoked".to_owned(),
+                        _ => String::new(),
+                    };
+                    let label = if d.revoked { style::dim(&d.name) } else { style::name(&d.name) };
+                    println!("{} {:<16} {}  {}", if d.revoked { style::warn("✗") } else { style::ok("✓") }, label, style::hash(&d.fingerprint_prefix), style::dim(&note));
+                }
+            }
+        }
+        DeviceCmd::Request => {
+            let pw = passphrase(true)?;
+            let (_core, request) = Core::create_device(dir, &pw)?;
+            eprintln!("{} {}", style::head("this device shows"), style::dim("(the device that enrols you must show the same digits)"));
+            eprintln!("\n  {}\n", style::digits(&request.fingerprint()?.spoken()));
+            eprintln!("{}", style::dim("hand the request below to a device that has the identity: unheld devices enroll <name> <file>"));
+            println!("{}", request.to_text());
+        }
+        DeviceCmd::Enroll { name, request } => {
+            let request = Request::from_text(&read_text(&request)?)?;
+            let mut core = Core::unlock(dir, &passphrase(false)?)?;
+            eprintln!("{} {}", style::head("the new device must show exactly"), style::name(&name));
+            eprintln!("\n  {}\n", style::digits(&request.fingerprint()?.spoken()));
+            let confirmed = ask_yes("does the new device show these digits, every group? [yes/NO] ")?;
+            let enrolment = core.enroll(&name, &request, confirmed)?;
+            eprintln!("{} {} enrolled; hand the enrolment below to it: unheld devices join <file>", style::ok("✓"), style::name(&name));
+            println!("{}", enrolment.to_text());
+        }
+        DeviceCmd::Join { enrolment } => {
+            let enrolment = Enrolment::from_text(&read_text(&enrolment)?)?;
+            let mut core = Core::unlock(dir, &passphrase(false)?)?;
+            let attach = core.join_device(&enrolment)?;
+            eprintln!("{} this device is now {}; hand what follows back to the witness: unheld devices connect <file>", style::ok("✓"), style::name(core.name()?));
+            println!("{}", attach.to_text());
+        }
+        DeviceCmd::Connect { attach, carrier: spec } => {
+            let attach = Attach::from_text(&read_text(&attach)?)?;
+            let mut core = Core::unlock(dir, &passphrase(false)?)?;
+            let outs = core.connect_device(&attach)?;
+            put_many(&spec, &outs)?;
+            eprintln!("{} {} blobs: one for each session's readers, and the last for the new device", style::ok("✓"), outs.len());
+        }
+        DeviceCmd::Revoke { name, carrier: spec } => {
+            let mut core = Core::unlock(dir, &passphrase(false)?)?;
+            let outs = core.revoke_device(&name)?;
+            put_many(&spec, &outs)?;
+            eprintln!("{} {} revoked; {} blobs, one for each session's readers", style::ok("✓"), style::name(&name), outs.len());
+        }
+    }
+    Ok(())
+}
+
 fn put(spec: &str, blob: &unheld_blob::Blob, what: &str) -> Result<(), Refuse> {
     carrier(spec)?.put(blob).map_err(|_| Refuse::CarrierIo)?;
     if let Some((kind, path)) = spec.split_once(':') {
@@ -459,7 +585,8 @@ fn show_roster(r: &unheld_core::Roster) {
             (false, MemberTrust::Vouched) => format!("vouched for by {}; you never compared digits with them", r.admin),
             _ => String::new(),
         };
-        println!("  {} {:<16} {}", style::trust(m.trust), label, style::dim(&note));
+        let devices = if m.devices > 1 { format!("{} devices  ", m.devices) } else { String::new() };
+        println!("  {} {:<16} {}{}", style::trust(m.trust), label, style::dim(&devices), style::dim(&note));
     }
 }
 

@@ -10,7 +10,7 @@ This is the smallest statement of unheld that is still the whole thing. Everythi
 Rng      = abstract                                  -- explicit, health-tested entropy
 Id       = { sk_sign, sk_kem, pub : Pub, devices : [Device] }
 Pub      = { pk_sign, pk_kem }
-Device   = Sign(sk_sign, { pk_dev, name, enrolled_at })   -- one Id, several devices
+Device   = Sign(sk_sign, { pk_dev, enrolled_at })         -- one Id, several devices; its name stays in the vault
 Fp       = H(Pub_a ++ Pub_b)                         -- pairwise safety number, ≥ 128 bits
 Intro    = Sign(sk_sign, Pub ++ devices ++ prekeys ++ version)
 Peer     = { pub : Pub, name, state : Verified | Changed }   -- built by verify alone

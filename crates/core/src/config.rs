@@ -8,7 +8,7 @@ pub mod vault {
     /// Random bytes inside the duress marker, so it decrypts to something checkable.
     pub const DURESS_MARKER_LEN: usize = 32;
     /// Format version, carried inside the ciphertext so the file has no cleartext header.
-    pub const FORMAT_VERSION: u32 = 1;
+    pub const FORMAT_VERSION: u32 = 2;
     pub const SALT_LEN: usize = 16;
     pub const NONCE_LEN: usize = 24;
     pub const KEY_LEN: usize = 32;
@@ -27,6 +27,23 @@ pub mod vault {
 pub mod identity {
     /// Random bytes standing for an identity inside credentials, so introductions carry no name.
     pub const CREDENTIAL_ID_LEN: usize = 16;
+}
+
+/// Devices of one identity (L15).
+pub mod device {
+    /// Ed25519 public key length, the one signature scheme in `mls::CIPHERSUITE`.
+    pub const KEY_LEN: usize = 32;
+    pub const SIGNATURE_LEN: usize = 64;
+    /// Version byte of the device certificate carried in every credential.
+    pub const CERT_VERSION: u8 = 1;
+    /// Domain separator for certificate signatures and the enrolment seal.
+    pub const DOMAIN: &[u8] = b"unheld device v1";
+    /// Domain separator for the digits a new device shows its witness.
+    pub const FP_DOMAIN: &[u8] = b"unheld device fp v1";
+    /// Enrolment time is rounded down to this many seconds before it enters a certificate.
+    pub const ENROLLED_AT_STEP: u64 = 86_400;
+    /// Local name of the device that created the identity.
+    pub const FIRST_NAME: &str = "first";
 }
 
 /// Fingerprint display.
