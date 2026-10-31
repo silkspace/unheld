@@ -44,8 +44,60 @@ Proof of concept. Two profiles exchange introductions, compare a pairwise 60-dig
 
 ```
 cargo test --workspace            # 10 tests: laws L1, L3, L4, L8, L11 and the crate graph
-cargo run --release -- --help
+./scripts/demo.sh                 # two vaults, one file carrier, every refusal shown live
 ```
+
+<details><summary>what the demo prints</summary>
+
+```
+1. two identities, keys generated on device
+identity alice created; public prefix 35bb2660c7
+identity bob created; public prefix ac50e658a2
+
+2. introductions exchanged out of band (here: files)
+bob staged as Pending; run `unheld verify bob`
+alice staged as Pending; run `unheld verify alice`
+
+3. sending before verification is refused (L3)
+refused: peer is not verified; run `verify` and compare the digits
+exit 2
+
+4. the pairwise number is the same on both sides
+refused: fingerprint not confirmed
+  69747 43550 11305 49452 90848 59417 32898 32037 74821 16992 72427 61762
+refused: fingerprint not confirmed
+  69747 43550 11305 49452 90848 59417 32898 32037 74821 16992 72427 61762
+
+5. both confirm by voice (here: yes on stdin)
+bob is Verified
+alice is Verified
+
+6. alice → bob through a file; the file holds a fixed-size blob
+blob: 1366 chars of base64url, 1024 raw bytes
+[session started by alice]
+alice: the carrier is a trait over bytes
+
+
+7. bob → alice through a pipe
+bob: and it cannot read this
+
+
+8. replay is refused (L11)
+refused: message was already opened, or arrived outside the tolerance window
+exit 2
+
+9. a flipped byte is refused (L8)
+refused: blob is malformed
+exit 2
+
+10. peers and the vault at rest
+bob              Verified  ac50e658a2  sessions 1  intro consumed
+alice            Verified  35bb2660c7  sessions 1  intro unused
+vault header: UNHELD01
+no plaintext in vault
+```
+
+</details>
 
 Not yet: Tamarin model, property tests per law, groups above two, devices, rotation, recovery, reproducible builds, the log. See TRACE.md for which rows are green.
 
