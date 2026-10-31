@@ -29,7 +29,8 @@ The first client is a terminal program because two people with laptops are the m
 | `unheld group remove <group> <member> [-c]` | `remove` | L16, L17 | Admin only. Writes the commit; the removed member opens nothing sealed after, and their client says who removed them. |
 | `unheld group send <group> [-c]` | `seal` | L4, L8, L18 | Seals one blob every member opens, and first prints every reader with their state, so a vouched stranger is seen every time. |
 | `unheld group roster <group>`, `group list` | | L18 | Every member as `Verified`, `Pending`, `Changed` or `Vouched` with the admin's name, and who the admin is. A joiner's group is named `g-` and the session hash until `group rename`. |
-| `unheld recover split \| join` | `split` | L21 | Phase 5. The interactive ceremony; shares shown once and never written. |
+| `unheld recover split <k> <n>` | `split` | L21 | Shows `n` shares of the identity key one at a time, each once, clearing the screen between them, and writes nothing: the vault is byte for byte what it was. Any `k` rebuild the key; `k - 1` are nothing. |
+| `unheld recover join <name> [files...]` | `join` | L21 | On a device with no vault: rebuilds the identity from `k` shares (files, or one per line on stdin) and makes a new vault with a fresh device key and no peers. Peers who verified you still do, since the key is the same; their names, the sessions and the device list are gone with the old vault. An altered share is refused and no vault is made. |
 | `unheld inspect [-c stdin \| file:<path>]` | | L7 | Reads a blob with no vault and no key and prints everything a carrier could learn from it, so the metadata surface is measured rather than assumed. |
 | `unheld about` | `install` | L22, L23, L24 | This version, its log entry, the builders who reproduced it, the signers and their jurisdictions, and the command to check it yourself. |
 | `unheld mcp` | | | Runs the Model Context Protocol server over stdio (docs/MCP.md). |

@@ -103,4 +103,10 @@ pub enum Refuse {
     VaultOld,
     #[error("key change refused: no continuity statement from the key that was verified")]
     NoContinuity,
+    #[error("share is malformed, from a different split, or altered")]
+    BadShare,
+    #[error("this split needs {0} shares to rebuild the identity")]
+    NotEnoughShares(usize),
+    #[error("at least {0} shares must be needed, and no more than there are")]
+    BadThreshold(u8),
 }

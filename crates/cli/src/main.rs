@@ -11,7 +11,7 @@ use unheld_blob::Carrier;
 use unheld_carriers::{ClipboardCarrier, FileCarrier, StdioCarrier};
 use unheld_core::config;
 use unheld_core::vocab::Refuse;
-use unheld_core::{Attach, Core, Enrolment, Intro, Outbound, Request};
+use unheld_core::{Attach, Core, Enrolment, Intro, Outbound, Request, Share};
 
 #[derive(Parser)]
 #[command(name = "unheld", about = "Messaging where nobody but the two of you holds a key.")]
@@ -69,6 +69,11 @@ enum Cmd {
     Devices {
         #[command(subcommand)]
         cmd: DeviceCmd,
+    },
+    /// Recovery shares: split the identity key into n shares of which any k rebuild it, or rebuild it.
+    Recover {
+        #[command(subcommand)]
+        cmd: RecoverCmd,
     },
     /// End every session with a peer, or leave a group, and delete the keys; a peer stays verified.
     Forget { name: String },
@@ -139,6 +144,17 @@ enum GroupCmd {
     List,
     /// Give a group a different local name; names never leave the vault.
     Rename { group: String, new_name: String },
+}
+
+#[derive(Subcommand)]
+enum RecoverCmd {
+    /// Show n shares one at a time, each once, and write nothing. Any k of them rebuild the identity.
+    Split { k: u8, n: u8 },
+    /// On a device with no vault: rebuild the identity from k shares, read from files or one per line on stdin.
+    Join {
+        name: String,
+        shares: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -434,6 +450,38 @@ fn run(cli: Cli) -> Result<(), Refuse> {
         }
         Cmd::Group { cmd } => group_cmd(cmd, &dir, cli.json)?,
         Cmd::Devices { cmd } => device_cmd(cmd, &dir, cli.json)?,
+        Cmd::Recover { cmd: RecoverCmd::Split { k, n } } => {
+            let core = Core::unlock(&dir, &passphrase(false)?)?;
+            let shares = core.split(k, n)?;
+            let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+            eprintln!("{} {}", style::head(&format!("{n} shares, any {k} rebuild the identity")), style::dim("each is shown once and written nowhere; hand each to one person"));
+            for (i, s) in shares.iter().enumerate() {
+                if interactive {
+                    print!("\x1b[2J\x1b[H");
+                }
+                println!("{} {}", style::warn(&format!("share {} of {n}", i + 1)), style::dim("(copy it now)"));
+                println!("{}", s.to_text().as_str());
+                if interactive && i + 1 < shares.len() {
+                    let _ = ask_yes("press Enter when it is copied; it will leave the screen ");
+                }
+            }
+            if interactive {
+                print!("\x1b[2J\x1b[H");
+            }
+            eprintln!("{} {} shares shown; this vault is unchanged and holds none of them", style::ok("✓"), n);
+        }
+        Cmd::Recover { cmd: RecoverCmd::Join { name, shares: sources } } => {
+            let texts: Vec<String> = if sources.is_empty() {
+                String::from_utf8(read_stdin()?).map_err(|_| Refuse::BadShare)?.lines().map(str::to_owned).filter(|l| !l.trim().is_empty()).collect()
+            } else {
+                sources.iter().map(|p| std::fs::read_to_string(p).map_err(|_| Refuse::VaultIo)).collect::<Result<_, _>>()?
+            };
+            let shares = texts.iter().map(|t| Share::from_text(t)).collect::<Result<Vec<_>, _>>()?;
+            let pw = passphrase(true)?;
+            let core = Core::recover(&dir, &pw, &name, &shares)?;
+            println!("{} {}  {}  {}", style::ok("✓"), style::head("identity rebuilt"), style::name(core.name()?), style::hash(&core.own_fingerprint_prefix()?));
+            println!("{}", style::dim("peers who verified you still do; import their introductions and compare digits again to talk"));
+        }
         Cmd::Duress => {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
             let d = rpassword::prompt_password("duress passphrase: ").map_err(|_| Refuse::VaultIo)?;

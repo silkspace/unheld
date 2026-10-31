@@ -82,6 +82,18 @@ pub mod group {
     pub const UNVERIFIED_PREFIX: &str = "?";
 }
 
+/// Recovery shares (L21).
+pub mod recovery {
+    /// Version byte of a share.
+    pub const SHARE_VERSION: u8 = 1;
+    /// Fewest shares that may be needed to rebuild; one share would be a copy of the key.
+    pub const MIN_THRESHOLD: u8 = 2;
+    /// Local name of the device a recovery creates.
+    pub const DEVICE_NAME: &str = "recovered";
+    /// Signed and checked after a rebuild, so a wrong share is a refusal and not a wrong key.
+    pub const PROBE: &[u8] = b"unheld recovery probe v1";
+}
+
 /// Framing of several MLS messages inside one blob.
 pub mod frame {
     pub const COUNT_LEN: usize = 1;

@@ -105,7 +105,7 @@ the new device must show exactly phone
 · your session with you now reaches phone
 ```
 
-From here `you` reads one person with two devices, both open what `you` sends, and what the phone sends arrives as `me ›`. `u --profile me id rotate -c file:/tmp/ring` makes new identity keys and writes one blob for the phone; the next message to `you` carries the old key's statement over the new one, `you` sees `me changed their key; verify again before sending to them` and cannot send until the sixty digits are compared again, and a new key that arrives without that statement is refused before anything moves. `u --profile me devices revoke phone -c dir:/tmp/rev` writes one commit per session, `you` opens it as `me removed 1 device`, and the phone opens its copy as `another device of yours revoked this one; those keys are deleted` and nothing after. A request that the witness cannot match to a screen is the 2025 linked-device attack, and it is what the default `no` is for.
+From here `you` reads one person with two devices, both open what `you` sends, and what the phone sends arrives as `me ›`. `u --profile me id rotate -c file:/tmp/ring` makes new identity keys and writes one blob for the phone; the next message to `you` carries the old key's statement over the new one, `you` sees `me changed their key; verify again before sending to them` and cannot send until the sixty digits are compared again, and a new key that arrives without that statement is refused before anything moves. `u --profile me devices revoke phone -c dir:/tmp/rev` writes one commit per session, `you` opens it as `me removed 1 device`, and the phone opens its copy as `another device of yours revoked this one; those keys are deleted` and nothing after. A request that the witness cannot match to a screen is the 2025 linked-device attack, and it is what the default `no` is for. `u --profile me recover split 2 3` shows three shares one at a time and writes nothing, and `u --profile later recover join me` on a bare profile takes any two of them and rebuilds the identity, which `you` still trusts because the key is the same.
 
 Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte blob (type the message, Enter, then Ctrl-D), and `-c clipboard` puts it on the clipboard so you can paste it into any chat and `open -c clipboard` on the other side. Paste the file into a note or a chat to yourself: that is everything any carrier ever sees, and `u inspect -c file:/tmp/blob` shows exactly what. `u --profile you open -c file:/tmp/blob` reads it, a second open is refused as a replay, and one changed character is refused as malformed. `strings ~/.unheld/me/vault | grep -c hello` prints `0`, and the file has no header or magic bytes at all, so nothing identifies it as a vault. Every command needs `--profile`, because the profile is which of you is speaking. `rm -rf ~/.unheld/me ~/.unheld/you` deletes both identities completely, since nothing about them exists anywhere else.
 
@@ -120,6 +120,7 @@ Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte bl
 | L14 | key change blocks | `Changed` peer ⇒ `seal` is `Refuse` |
 | L15 | enrolment needs a witness | new device confirmed on an old device, fingerprint shown |
 | L16 | no ghost | roster change ⇒ signed by a verified member ⇒ shown to all; a device change is not one |
+| L21 | shares by ceremony | `Share` exists only inside `recover split`; the vault never holds one |
 
 [TRACE.md](TRACE.md) maps every law to a phase, a test, a review layer and the screen where you see it. Rows with gaps say so.
 
@@ -141,7 +142,7 @@ The prover earned its keep before anything was proved: two drafts of the welcome
 Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe or the clipboard with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
-cargo test --workspace            # 25 tests: laws L1, L3, L4, L8, L10, L11, L14 to L19 and the crate graph
+cargo test --workspace            # 26 tests: laws L1, L3, L4, L8, L10, L11, L14 to L19, L21 and the crate graph
 ./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
 ./scripts/demo.sh                 # two vaults, one file carrier, every refusal shown live
 ```
@@ -198,7 +199,7 @@ no plaintext in vault
 
 </details>
 
-Not yet: property tests per law, the ordered relay for large groups, recovery, reproducible builds, the log. See TRACE.md for which rows are green.
+Not yet: property tests per law, the ordered relay for large groups, reproducible builds, the log. See TRACE.md for which rows are green.
 
 Primitives are never written here. Ratchet: [OpenMLS](https://github.com/openmls/openmls). Tor: [Arti](https://gitlab.torproject.org/tpo/core/arti). Everything else: RustCrypto, pinned, `cargo vet`'d. We hand-roll the architecture and not one byte of crypto. See [`docs/decisions/001`](docs/decisions/001-ratchet-and-licence.md) for why not libsignal (licence, not safety).
 

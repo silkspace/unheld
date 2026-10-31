@@ -6,11 +6,13 @@
 pub mod config;
 mod device;
 mod group;
+mod recovery;
 pub mod vault;
 pub mod vocab;
 
 pub use device::{Attach, Device, Enrolment, Request};
 pub use group::{Member, Roster};
+pub use recovery::Share;
 
 use base64::Engine as _;
 use openmls::prelude::*;
