@@ -26,6 +26,40 @@ That first line is the whole threat model. Correctness is a square that commutes
 
 **Agents are correspondents.** `unheld mcp` exposes `message_send` and `messages_read` to a model and deliberately has no `verify`, `enroll`, `rotate`, `split` or `wipe` tool, so a prompt injection cannot perform a ceremony. Your assistant uses your vault under a grant you made, over a carrier that sees ciphertext. The model vendor is just another `Blob → ()`.
 
+## try it
+
+Two profiles on one machine are two vaults, so you can be both ends. Install once, then open two terminals.
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh     # if you have no Rust
+git clone https://github.com/silkspace/unheld && cd unheld
+cargo install --path crates/cli --locked                          # puts `unheld` on your PATH
+alias u=unheld
+```
+
+```bash
+u --profile me  id new me                          # choose a passphrase; keys never leave ~/.unheld/me
+u --profile you id new you
+
+u --profile me  intro export --qr > /tmp/me.intro  # a QR on screen, the text in the file
+u --profile you intro export --qr > /tmp/you.intro
+u --profile me  intro import you /tmp/you.intro
+u --profile you intro import me  /tmp/me.intro
+
+u --profile me  verify you --qr                    # terminal one
+u --profile you verify me  --qr                    # terminal two: same QR, same 60 digits
+                                                   # type `yes` on both only if they match
+
+echo "hello" | u --profile me send you | u --profile you open
+```
+
+```
+· session started by me
+me › hello
+```
+
+Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte blob (type the message, Enter, then Ctrl-D). Paste that file into a note or a chat to yourself: that is everything any carrier ever sees. `u --profile you open -c file:/tmp/blob` reads it, a second open is refused as a replay, and one changed character is refused as malformed. `strings ~/.unheld/me/vault | grep -c hello` prints `0`. Every command needs `--profile`, because the profile is which of you is speaking. `rm -rf ~/.unheld/me ~/.unheld/you` deletes both identities completely, since nothing about them exists anywhere else.
+
 ## the laws
 
 24 of them in [KERNEL.md](KERNEL.md), each with who enforces it: the compiler, the crate graph, a Tamarin lemma, a proptest, a Kani harness, or a cited proof we inherit from MLS and don't redo. The five that answer "who holds the key":

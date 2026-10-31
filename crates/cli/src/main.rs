@@ -2,8 +2,10 @@
 //! The command-line client. Each subcommand is one kernel verb; every refusal is exit code 2.
 
 use clap::{Parser, Subcommand};
+use owo_colors::{OwoColorize, Stream};
+use unheld_core::vocab::PeerState;
 use std::io::{IsTerminal, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use unheld_blob::Carrier;
 use unheld_carriers::{FileCarrier, StdioCarrier};
@@ -80,6 +82,56 @@ enum IntroCmd {
     Import { name: String, source: String },
 }
 
+/// Colour that switches itself off when the stream is not a terminal or NO_COLOR is set.
+mod style {
+    use super::*;
+    use owo_colors::Style;
+
+    fn paint(t: &str, stream: Stream, st: Style) -> String {
+        t.if_supports_color(stream, |t| t.style(st)).to_string()
+    }
+    pub fn head(t: &str) -> String {
+        paint(t, Stream::Stdout, Style::new().bold())
+    }
+    pub fn ok(t: &str) -> String {
+        paint(t, Stream::Stdout, Style::new().green().bold())
+    }
+    pub fn warn(t: &str) -> String {
+        paint(t, Stream::Stdout, Style::new().yellow().bold())
+    }
+    pub fn bad(t: &str) -> String {
+        paint(t, Stream::Stderr, Style::new().red().bold())
+    }
+    pub fn dim(t: &str) -> String {
+        paint(t, Stream::Stdout, Style::new().dimmed())
+    }
+    pub fn name(t: &str) -> String {
+        paint(t, Stream::Stdout, Style::new().cyan().bold())
+    }
+    pub fn hash(t: &str) -> String {
+        paint(t, Stream::Stdout, Style::new().magenta())
+    }
+    pub fn state(st: PeerState) -> String {
+        match st {
+            PeerState::Verified => ok("Verified"),
+            PeerState::Pending => warn("Pending "),
+            PeerState::Changed => paint("Changed ", Stream::Stdout, Style::new().red().bold()),
+        }
+    }
+    /// Twelve groups of digits, alternating colour so the eye tracks them while reading aloud.
+    pub fn digits(spoken: &str) -> String {
+        spoken
+            .split(' ')
+            .enumerate()
+            .map(|(i, g)| {
+                let st = if i % 2 == 0 { Style::new().bold().bright_white() } else { Style::new().bold().bright_cyan() };
+                paint(g, Stream::Stdout, st)
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 fn home() -> PathBuf {
     if let Ok(h) = std::env::var(config::vault::HOME_ENV) {
         return PathBuf::from(h);
@@ -102,21 +154,25 @@ fn passphrase(confirm: bool) -> Result<String, Refuse> {
     Ok(p)
 }
 
-/// Ask the human a yes-or-no question on the controlling terminal. Falls back to stdin
-/// when there is no terminal (tests and pipes). Anything but `yes` is no.
+/// Ask the human a yes-or-no question. On a terminal, ask there. Otherwise read the piped
+/// answer, and only if the pipe held nothing fall back to the controlling terminal, so a wrapper
+/// that closed stdin still reaches the human while a script's `echo yes |` still works.
 fn ask_yes(prompt: &str) -> Result<bool, Refuse> {
     let mut line = String::new();
     if std::io::stdin().is_terminal() {
         print!("{prompt}");
         std::io::stdout().flush().map_err(|_| Refuse::VaultIo)?;
         std::io::stdin().read_line(&mut line).map_err(|_| Refuse::VaultIo)?;
-    } else if let Ok(mut tty) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty") {
-        write!(tty, "{prompt}").map_err(|_| Refuse::VaultIo)?;
-        tty.flush().map_err(|_| Refuse::VaultIo)?;
-        let mut reader = std::io::BufReader::new(tty);
-        std::io::BufRead::read_line(&mut reader, &mut line).map_err(|_| Refuse::VaultIo)?;
     } else {
         line = String::from_utf8(read_stdin()?).unwrap_or_default();
+        if line.trim().is_empty() {
+            if let Ok(mut tty) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty") {
+                write!(tty, "{prompt}").map_err(|_| Refuse::VaultIo)?;
+                tty.flush().map_err(|_| Refuse::VaultIo)?;
+                let mut reader = std::io::BufReader::new(tty);
+                std::io::BufRead::read_line(&mut reader, &mut line).map_err(|_| Refuse::VaultIo)?;
+            }
+        }
     }
     Ok(line.trim() == "yes")
 }
@@ -141,11 +197,12 @@ fn run(cli: Cli) -> Result<(), Refuse> {
         Cmd::Id { cmd: IdCmd::New { name } } => {
             let pw = passphrase(true)?;
             let core = Core::create(&dir, &pw, &name)?;
-            println!("identity {} created; public prefix {}", core.name()?, core.own_fingerprint_prefix()?);
+            println!("{} {}  {}  {}", style::ok("✓"), style::head("identity created"), style::name(core.name()?), style::hash(&core.own_fingerprint_prefix()?));
+            println!("{}", style::dim("keys live in this vault and nowhere else"));
         }
         Cmd::Id { cmd: IdCmd::Show } => {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
-            println!("{}  {}  {}", core.name()?, core.own_fingerprint_prefix()?, dir.display());
+            println!("{}  {}  {}", style::name(core.name()?), style::hash(&core.own_fingerprint_prefix()?), style::dim(&dir.display().to_string()));
         }
         Cmd::Intro { cmd: IntroCmd::Export { qr } } => {
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
@@ -169,7 +226,8 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             };
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
             let peer = core.import(&name, &Intro::from_text(&text)?)?;
-            println!("{} staged as {:?}; run `unheld verify {}`", peer.name, peer.state, peer.name);
+            println!("{} {} staged as {}", style::ok("✓"), style::name(&peer.name), style::state(peer.state));
+            println!("{}", style::dim(&format!("next: unheld verify {}   (compare the digits out loud)", peer.name)));
         }
         Cmd::Verify { name, qr } => {
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
@@ -183,10 +241,12 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                     .build();
                 println!("{drawn}");
             }
-            println!("read these aloud and listen to theirs:\n\n  {}\n", fp.spoken());
+            println!("{} {}", style::head("safety number with"), style::name(&name));
+            println!("{}\n", style::dim("read these aloud and listen to theirs; they must be identical"));
+            println!("  {}\n", style::digits(&fp.spoken()));
             let confirmed = ask_yes("did every group match on both sides? [yes/NO] ")?;
             let peer = core.verify(&name, confirmed)?;
-            println!("{} is {:?}", peer.name, peer.state);
+            println!("{} {} is {}", style::ok("✓"), style::name(&peer.name), style::state(peer.state));
         }
         Cmd::Peers => {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
@@ -194,32 +254,56 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&peers).map_err(|_| Refuse::Protocol)?);
             } else {
+                if peers.is_empty() {
+                    println!("{}", style::dim("no peers yet; import an introduction"));
+                }
                 for p in peers {
-                    println!("{:<16} {:<9} {}  sessions {}  intro {}", p.name, format!("{:?}", p.state), p.fingerprint_prefix, p.sessions, if p.has_intro { "unused" } else { "consumed" });
+                    println!(
+                        "{} {:<16} {}  {}",
+                        style::state(p.state),
+                        style::name(&p.name),
+                        style::hash(&p.fingerprint_prefix),
+                        style::dim(&format!("sessions {}  intro {}", p.sessions, if p.has_intro { "unused" } else { "consumed" }))
+                    );
                 }
             }
         }
         Cmd::Send { name, carrier: spec } => {
+            let mut out = carrier(&spec)?;
+            if std::io::stdin().is_terminal() {
+                eprintln!("{}", style::dim(&format!("message to {name}: type, press Enter, then Ctrl-D to seal")));
+            }
             let body = read_stdin()?;
+            if body.iter().all(|b| b.is_ascii_whitespace()) {
+                return Err(Refuse::EmptyMessage);
+            }
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
             let blob = core.seal(&name, &body)?;
-            carrier(&spec)?.put(&blob).map_err(|_| Refuse::VaultIo)?;
+            out.put(&blob).map_err(|_| Refuse::CarrierIo)?;
+            if let Some((kind, path)) = spec.split_once(':') {
+                let shown = Path::new(path).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                eprintln!("{} {}", style::ok("✓"), style::dim(&format!("sealed {} bytes into {kind} {shown}", blob.len())));
+            }
         }
         Cmd::Open { carrier: spec } => {
-            let blob = carrier(&spec)?.get().map_err(|_| Refuse::BadBlob)?;
+            let blob = carrier(&spec)?.get().map_err(|e| match e {
+                unheld_blob::CarrierError::Empty => Refuse::NothingToOpen,
+                unheld_blob::CarrierError::Io(_) => Refuse::CarrierIo,
+                unheld_blob::CarrierError::Blob(_) => Refuse::BadBlob,
+            })?;
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
             for m in core.open(&blob)? {
                 if m.session_started {
-                    eprintln!("[session started by {}]", m.from);
+                    eprintln!("{}", style::dim(&format!("· session started by {}", m.from)));
                 } else {
-                    println!("{}: {}", m.from, String::from_utf8_lossy(&m.body));
+                    println!("{} {}", style::name(&format!("{} ›", m.from)), String::from_utf8_lossy(&m.body));
                 }
             }
         }
         Cmd::About => {
-            println!("unheld {}  proof of concept; unsigned, unlogged, unaudited", env!("CARGO_PKG_VERSION"));
-            println!("ratchet: OpenMLS, ciphersuite {:?}", config::mls::CIPHERSUITE);
-            println!("not protected: a device someone else controls, a careless or hostile correspondent, a coerced person");
+            println!("{} {}  {}", style::head("unheld"), env!("CARGO_PKG_VERSION"), style::dim("proof of concept; unsigned, unlogged, unaudited"));
+            println!("{} OpenMLS, {:?}", style::dim("ratchet "), config::mls::CIPHERSUITE);
+            println!("{} a device someone else controls, a careless or hostile correspondent, a coerced person", style::warn("not protected:"));
         }
     }
     Ok(())
@@ -229,7 +313,7 @@ fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("refused: {e}");
+            eprintln!("{} {e}", style::bad("refused:"));
             ExitCode::from(2)
         }
     }

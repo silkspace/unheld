@@ -34,11 +34,17 @@ pub enum Refuse {
     BadIntro,
     #[error("blob is malformed")]
     BadBlob,
+    #[error("carrier holds nothing to open")]
+    NothingToOpen,
+    #[error("carrier could not be read or written")]
+    CarrierIo,
+    #[error("empty message")]
+    EmptyMessage,
     #[error("sender is not a verified peer")]
     UnknownSender,
     #[error("no session for this message")]
     UnknownSession,
-    #[error("message was already opened, or arrived outside the tolerance window")]
+    #[error("could not open: already opened, outside the tolerance window, or altered in transit")]
     Replay,
     #[error("vault could not be opened: wrong passphrase or damaged file")]
     VaultLocked,
