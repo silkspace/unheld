@@ -58,7 +58,7 @@ echo "hello" | u --profile me send you | u --profile you open
 me › hello
 ```
 
-Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte blob (type the message, Enter, then Ctrl-D). Paste that file into a note or a chat to yourself: that is everything any carrier ever sees. `u --profile you open -c file:/tmp/blob` reads it, a second open is refused as a replay, and one changed character is refused as malformed. `strings ~/.unheld/me/vault | grep -c hello` prints `0`. Every command needs `--profile`, because the profile is which of you is speaking. `rm -rf ~/.unheld/me ~/.unheld/you` deletes both identities completely, since nothing about them exists anywhere else.
+Then break it. `u --profile me send you -c file:/tmp/blob` writes a 1024-byte blob (type the message, Enter, then Ctrl-D). Paste that file into a note or a chat to yourself: that is everything any carrier ever sees. `u --profile you open -c file:/tmp/blob` reads it, a second open is refused as a replay, and one changed character is refused as malformed. `strings ~/.unheld/me/vault | grep -c hello` prints `0`, and the file has no header or magic bytes at all, so nothing identifies it as a vault. Every command needs `--profile`, because the profile is which of you is speaking. `rm -rf ~/.unheld/me ~/.unheld/you` deletes both identities completely, since nothing about them exists anywhere else.
 
 ## the laws
 

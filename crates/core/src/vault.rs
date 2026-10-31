@@ -1,4 +1,6 @@
 //! The vault: everything the endpoint remembers, encrypted at rest under a passphrase.
+//! The file is salt, nonce, ciphertext and nothing else, so it carries no cleartext header and
+//! is indistinguishable from random bytes. The format version lives inside the ciphertext.
 
 use crate::config;
 use crate::vocab::Refuse;
@@ -29,7 +31,7 @@ fn derive(passphrase: &str, salt: &[u8]) -> Result<VaultKey, Refuse> {
     Ok(VaultKey(key))
 }
 
-/// Encrypt `plain` under `passphrase` into the on-disk format: magic, salt, nonce, ciphertext.
+/// Encrypt `plain` under `passphrase` into the on-disk format: salt, nonce, ciphertext.
 pub fn seal_to_file(path: &Path, passphrase: &str, plain: &[u8]) -> Result<(), Refuse> {
     let mut salt = [0u8; config::vault::SALT_LEN];
     let mut nonce = [0u8; config::vault::NONCE_LEN];
@@ -40,8 +42,7 @@ pub fn seal_to_file(path: &Path, passphrase: &str, plain: &[u8]) -> Result<(), R
     let ct = cipher
         .encrypt(XNonce::try_from(&nonce[..]).map_err(|_| Refuse::Protocol)?.as_ref(), plain)
         .map_err(|_| Refuse::Protocol)?;
-    let mut out = Vec::with_capacity(config::vault::MAGIC.len() + salt.len() + nonce.len() + ct.len());
-    out.extend_from_slice(config::vault::MAGIC);
+    let mut out = Vec::with_capacity(salt.len() + nonce.len() + ct.len());
     out.extend_from_slice(&salt);
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ct);
@@ -51,17 +52,13 @@ pub fn seal_to_file(path: &Path, passphrase: &str, plain: &[u8]) -> Result<(), R
     Ok(())
 }
 
-/// Decrypt the on-disk format. A wrong passphrase and a damaged file are the same refusal.
+/// Decrypt the on-disk format. A wrong passphrase, a damaged file and a file that was never a
+/// vault are the same refusal, because the file carries nothing that would tell them apart.
 pub fn open_from_file(path: &Path, passphrase: &str) -> Result<Vec<u8>, Refuse> {
     let bytes = std::fs::read(path).map_err(|_| Refuse::VaultIo)?;
-    let magic_end = config::vault::MAGIC.len();
-    let salt_end = magic_end + config::vault::SALT_LEN;
+    let salt_end = config::vault::SALT_LEN;
     let nonce_end = salt_end + config::vault::NONCE_LEN;
-    let magic = bytes.get(..magic_end).ok_or(Refuse::VaultLocked)?;
-    if magic != config::vault::MAGIC {
-        return Err(Refuse::VaultLocked);
-    }
-    let salt = bytes.get(magic_end..salt_end).ok_or(Refuse::VaultLocked)?;
+    let salt = bytes.get(..salt_end).ok_or(Refuse::VaultLocked)?;
     let nonce = bytes.get(salt_end..nonce_end).ok_or(Refuse::VaultLocked)?;
     let ct = bytes.get(nonce_end..).ok_or(Refuse::VaultLocked)?;
     let key = derive(passphrase, salt)?;

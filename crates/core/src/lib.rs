@@ -23,6 +23,9 @@ const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STA
 /// What the vault remembers, besides the MLS storage map.
 #[derive(Serialize, Deserialize, Default)]
 struct State {
+    /// Format version, inside the ciphertext (see `vault`).
+    #[serde(default)]
+    version: u32,
     identity: Option<IdentityRecord>,
     peers: BTreeMap<String, PeerRecord>,
     /// The OpenMLS storage, base64 key and value pairs.
@@ -120,6 +123,7 @@ impl Core {
             .map_err(mls_err)?;
         signer.store(provider.storage()).map_err(mls_err)?;
         let state = State {
+            version: config::vault::FORMAT_VERSION,
             identity: Some(IdentityRecord {
                 name: name.to_owned(),
                 signature_public: signer.to_public_vec(),
@@ -139,6 +143,9 @@ impl Core {
         }
         let plain = vault::open_from_file(&path, passphrase)?;
         let state: State = serde_json::from_slice(&plain).map_err(|_| Refuse::VaultLocked)?;
+        if state.version > config::vault::FORMAT_VERSION {
+            return Err(Refuse::VaultLocked);
+        }
         let provider = OpenMlsRustCrypto::default();
         {
             let mut map = provider.storage().values.write().map_err(|_| Refuse::Protocol)?;
@@ -544,6 +551,12 @@ mod tests {
         assert!(bob.open(&tampered).is_err());
         // Wrong passphrase is a locked vault.
         assert!(matches!(Core::unlock(&a_dir, "nope"), Err(Refuse::VaultLocked)));
+        // The vault file has no cleartext header: its first bytes are the random salt.
+        let v1 = std::fs::read(a_dir.join(config::vault::FILE_NAME)).unwrap();
+        alice.save().unwrap();
+        let v2 = std::fs::read(a_dir.join(config::vault::FILE_NAME)).unwrap();
+        assert_ne!(&v1[..config::vault::SALT_LEN], &v2[..config::vault::SALT_LEN]);
+        assert!(!v1.windows(6).any(|w| w == b"UNHELD" || w == b"alice\""));
     }
 
     #[test]

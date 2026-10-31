@@ -3,7 +3,8 @@
 /// Vault files and key derivation.
 pub mod vault {
     pub const FILE_NAME: &str = "vault";
-    pub const MAGIC: &[u8; 8] = b"UNHELD01";
+    /// Format version, carried inside the ciphertext so the file has no cleartext header.
+    pub const FORMAT_VERSION: u32 = 1;
     pub const SALT_LEN: usize = 16;
     pub const NONCE_LEN: usize = 24;
     pub const KEY_LEN: usize = 32;
