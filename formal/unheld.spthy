@@ -79,11 +79,11 @@ rule Verify:
    The welcome names the recipient's identity key outside the encryption and the sender's
    inside it. MLS does both by construction: the recipient's key package is named by hash,
    and the confirmation tag ties the group secrets to the tree the signer is in. Without the
-   first the prover found an unknown-key-share trace (a hostile third party presents your
-   peer's encryption key as its own, and your peer reads words meant for the third party);
-   without the second it found the mirror image (a hostile verified peer re-signs a welcome
-   it cannot read, and you join a session with the wrong party). Both are in the git history
-   of this file. */
+   first there is an unknown-key-share trace (a hostile third party presents your peer's
+   encryption key as its own, and your peer reads words meant for the third party); without
+   the second there is its mirror image (a hostile verified peer re-signs a welcome it cannot
+   read, and you join a session with the wrong party). Drop either binding and the lemmas
+   below are false. */
 rule Start:
   let c = aenc(<~k, pk(skA)>, ekY) in
   [ !Trusts($A, $B, pkY, ekY), !Ltk($A, skA), Fr(~k) ]

@@ -131,11 +131,11 @@ Then break it. `u --profile me send you -c file:/tmp/blob` writes a blob of one 
 | | |
 |---|---|
 | `seal_only_to_a_genuine_key` | whatever the carrier injects, a seal reaches only a key the named peer generated and you verified (L3, L14), with no honesty assumption at all |
-| `opened_was_sealed` | what you open as from A, A sealed, unless A's device is someone else's; the sharper `no_impersonation`, that A sealed it to you, is stated and its search is still open |
+| `opened_was_sealed` | what you open as from A, A sealed, unless A's device is someone else's; the sharper `no_impersonation`, that A sealed it to you, is stated and unproved |
 | `secrecy` | a sealed message never enters the carrier's knowledge while both devices are their owners' |
 | `no_ghost` | a merged roster change was committed by the admin; the carrier alone produces none (L16) |
 
-The prover earned its keep before anything was proved: two drafts of the welcome each admitted an unknown-key-share trace, and the bindings that close them are exactly the two MLS has by construction. [formal/README.md](formal/README.md) has the traces and what is left out.
+Two bindings in the welcome carry the weight: the recipient's identity key named outside the encryption, and the sender's named inside it. Without the first there is an unknown-key-share attack, where a third party presents your peer's encryption key as its own and your peer reads words meant for someone else; without the second there is its mirror image, where a verified peer re-signs a welcome it cannot read and you join a session with the wrong party. MLS carries both by construction, as the key package hash and the confirmation tag, and the theory states them as rules. [formal/README.md](formal/README.md) has the lemmas and what is left out.
 
 ## status
 
@@ -218,7 +218,7 @@ Read [KERNEL.md](KERNEL.md), find a law you can violate, open an issue with the 
 | [IDEA.md](IDEA.md) | what's actually wrong with Signal, WhatsApp, Telegram; threat tiers T0–T8; architecture; roadmap |
 | [KERNEL.md](KERNEL.md) | the signature, the 24 laws, the category, attacks as squares that fail to commute, the language |
 | [TRACE.md](TRACE.md) | law → phase → test → review → screen; MVP acceptance; known gaps |
-| [formal/](formal/README.md) | the policy layer as a Tamarin theory: lemmas, the traces the prover found, what is left out |
+| [formal/](formal/README.md) | the policy layer as a Tamarin theory: lemmas, the two attacks the welcome's bindings exclude, what is left out |
 | [OATH.md](OATH.md) | what the humans promise, signed with release keys |
 | [docs/MAINTAINERS.md](docs/MAINTAINERS.md) | hardware keys, builders, no agent holds a credential |
 | [docs/CLI.md](docs/CLI.md) · [docs/MCP.md](docs/MCP.md) · [docs/INTEGRATION.md](docs/INTEGRATION.md) | the three surfaces |

@@ -29,4 +29,4 @@ The AGPL has always permitted selling the software; what it forbids is withholdi
 
 ## Alternatives rejected
 
-Keep libsignal and ship iOS outside the store: loses most iOS users and still forbids commercial embedding. Keep libsignal and ask Signal for an exception: they have not granted one to anyone and the project would wait on a decision it cannot influence. Implement the Double Ratchet ourselves under MIT: forbidden by AGENTS.md rule one, and the first draft of this project explained why.
+Keep libsignal and ship iOS outside the store: loses most iOS users and still forbids commercial embedding. Keep libsignal and ask Signal for an exception: they have not granted one to anyone and the project would wait on a decision it cannot influence. Implement the Double Ratchet ourselves under MIT: forbidden by AGENTS.md rule one.

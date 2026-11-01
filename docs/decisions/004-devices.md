@@ -26,4 +26,4 @@ An identity is one signing key that peers verify by comparing digits, and a sess
 
 ## What is not here
 
-Recovery shares split the identity key only, so a recovered identity has its peers' trust but no sessions and no device list. Vault files written before this decision are refused in words rather than migrated, since nothing before 0.1 is kept.
+Recovery shares split the identity key only, so a recovered identity has its peers' trust but no sessions and no device list. Vault formats are not migrated before 0.1; a vault in another format is refused in words.

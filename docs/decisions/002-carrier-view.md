@@ -2,7 +2,7 @@
 
 **Status.** Accepted for the overlay; to be revisited with the relay queue design.
 
-**Laws touched.** L7 (unlinkability) is stated precisely rather than loosely; L13 is unchanged; the introduction no longer carries a name.
+**Laws touched.** L7 (unlinkability) is stated precisely rather than loosely; L13 is unchanged; the introduction carries no name.
 
 ## The question
 
@@ -10,7 +10,7 @@ The kernel says a blob carries no header the system adds, and the proof of conce
 
 ## What is in the clear, measured
 
-`unheld inspect` reads a blob the way a carrier would, with no vault and no key, and a test pins what it finds so a change cannot widen it silently. For an application message the carrier can read the protocol version and wire format, a 32-byte random session identifier, the epoch number and the content type. The sender and the content are encrypted. For a welcome the carrier can read the ciphersuite, the number of recipients and a hash of each recipient's introduction, which a carrier that also saw the introduction can match. For an introduction, which is public by design, the carrier reads a key package; it no longer contains a name, because the credential identity is sixteen random bytes and names live only in the vault that chose them.
+`unheld inspect` reads a blob the way a carrier would, with no vault and no key, and a test pins what it finds so a change cannot widen it silently. For an application message the carrier can read the protocol version and wire format, a 32-byte random session identifier, the epoch number and the content type. The sender and the content are encrypted. For a welcome the carrier can read the ciphersuite, the number of recipients and a hash of each recipient's introduction, which a carrier that also saw the introduction can match. For an introduction, which is public by design, the carrier reads a key package; it contains no name, because the credential identity is sixteen random bytes and names live only in the vault that chose them.
 
 ## The decision
 
