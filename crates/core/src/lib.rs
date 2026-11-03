@@ -1007,6 +1007,9 @@ fn frame(parts: &[Vec<u8>]) -> Result<Vec<u8>, Refuse> {
 
 fn unframe(bytes: &[u8]) -> Result<Vec<Vec<u8>>, Refuse> {
     let count = *bytes.first().ok_or(Refuse::BadBlob)? as usize;
+    if count == 0 {
+        return Err(Refuse::BadBlob);
+    }
     let mut pos = config::frame::COUNT_LEN;
     let mut parts = Vec::with_capacity(count);
     for _ in 0..count {
@@ -1098,6 +1101,18 @@ mod tests {
         // Only a fresh comparison restores sending.
         alice.verify("bob", true).unwrap();
         assert!(alice.seal("bob", b"hi").is_ok());
+    }
+
+    /// L8: a blob that frames no message at all is refused, not opened as nothing.
+    #[test]
+    fn a_frame_with_no_parts_is_refused() {
+        let dir = tmp("empty-frame");
+        let mut core = Core::create(&dir, "pw", "alice").unwrap();
+        let before = std::fs::read(dir.join(config::vault::FILE_NAME)).unwrap();
+        let blob = Blob::pad(&[0]).unwrap();
+        assert!(matches!(core.open(&blob), Err(Refuse::BadBlob)));
+        // Nothing was opened, so nothing was written.
+        assert_eq!(std::fs::read(dir.join(config::vault::FILE_NAME)).unwrap(), before);
     }
 
     #[test]
