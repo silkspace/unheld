@@ -21,7 +21,7 @@ Every law has a phase, a test, a review layer and a screen, and this file is whe
 |-----|-------|------|--------|----------------|
 | L1 roundtrip | 3 | proptest over sessions and messages | R4 | none needed |
 | L2 zero custody | 1 (POC), 2 | `carriers_cannot_depend_on_core`; Tamarin `secrecy` against the carrier; `cargo deny` ban and grep for network calls outside `Carrier` to come | R3, R7 | relay and carrier picker shows "this carrier sees only ciphertext" |
-| L3 no skip | 1 (POC) | compiler (one constructor); Tamarin `seal_only_to_a_genuine_key` and `opened_was_sealed` (formal/); `no_impersonation` stated, unproved | R2, R3 | the verify screen, which blocks sending until the pairwise number is compared |
+| L3 no skip | 1 (POC) | compiler (one constructor); Tamarin `seal_only_to_a_genuine_key` and `no_impersonation` (formal/) | R2, R3 | the verify screen, which blocks sending until the pairwise number is compared |
 | L4 uniform size | 3 | proptest on blob length; Kani harness | R4 | none; attachments show "sent as N chunks" |
 | L5 forward secrecy | 3 | cited proof; regression test on key deletion after ratchet step | R7 | none |
 | L6 post-compromise | 3 | cited proof; test that a leaked state stops opening after a round trip | R7 | none |

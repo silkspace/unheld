@@ -100,12 +100,12 @@ rule Join:
 
 rule Seal:
   [ !Session($A, $B, k), !Ltk($A, skA), Fr(~m) ]
-  --[ Sealed($A, $B, ~m) ]->
+  --[ Sealed($A, $B, ~m), SealedUnder($A, $B, k, ~m) ]->
   [ Out(senc(<'app', ~m, sign(<'app', ~m>, skA)>, k)) ]
 
 rule Open:
   [ !Session($B, $A, k), !Trusts($B, $A, pkX, ekX), In(senc(<'app', m, sig>, k)) ]
-  --[ Eq(verify(sig, <'app', m>, pkX), true), Opened($B, $A, m) ]->
+  --[ Eq(verify(sig, <'app', m>, pkX), true), Opened($B, $A, m), OpenedUnder($B, $A, k, m) ]->
   []
 
 /* ---------- groups: one admin, and a roster change is its signed commit (L16) ---------- */
@@ -194,6 +194,25 @@ lemma start_key_secret [reuse]:
 lemma opened_was_sealed [reuse]:
   "All A B m #i. Opened(B, A, m) @i & not (Ex #r. Reveal(A) @r)
      ==> Ex Y #j. Sealed(A, Y, m) @j & j < i"
+
+/* The session key pins the session. A key is started once; a join follows a start by the
+   named sender or the carrier knew the key first; the key of a session you open under, if
+   its named sender is honest, never reaches the carrier; so what you open under it was
+   sealed under it, by the named sender. */
+lemma one_start_per_key [reuse]:
+  "All A B C D k #i #j. Start(A, B, k) @i & Start(C, D, k) @j ==> #i = #j"
+
+lemma join_key_started_or_known [reuse]:
+  "All A B k #i. Join(A, B, k) @i
+     ==> (Ex C #j. Start(B, C, k) @j & j < i) | (Ex #l. KU(k) @l & l < i)"
+
+lemma opened_key_secret [reuse]:
+  "All A B k m #i. OpenedUnder(B, A, k, m) @i & not (Ex #r. Reveal(A) @r)
+     ==> not (Ex #l. K(k) @l)"
+
+lemma opened_under_was_sealed_under [reuse]:
+  "All A B k m #i. OpenedUnder(B, A, k, m) @i & not (Ex #r. Reveal(A) @r)
+     ==> Ex Y #j. SealedUnder(A, Y, k, m) @j & j < i"
 
 /* No impersonation. If B opens a message as from A, A sealed it to B, unless A's device
    is someone else's. */

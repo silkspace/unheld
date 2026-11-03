@@ -7,7 +7,7 @@ brew install tamarin-prover/tap/tamarin-prover     # or see tamarin-prover.com f
 ./scripts/prove.sh                                 # proves every lemma, fails on any that is not
 ```
 
-One prover at a time: a run takes several gigabytes. `no_impersonation` is stated and unproved.
+One lemma per prover process, in sequence; the whole run takes a few minutes and a few gigabytes.
 
 ## What is proved
 
@@ -15,7 +15,7 @@ One prover at a time: a run takes several gigabytes. `no_impersonation` is state
 |-------|-----|-----------|
 | `seal_only_to_a_genuine_key` | L3, L14 | Whatever the carrier injects, a message is sealed only to a key the named peer generated and the sender verified. Holds with no assumption at all, even against a revealed key, because the ceremony's channel is not the carrier. |
 | `opened_was_sealed` | L3 | If B opens a message as from A, A sealed that message, unless A's device is someone else's. |
-| `no_impersonation` | L3 | The sharper form: A sealed it to B. Stated, with the lemma above as a reusable step, and unproved. |
+| `no_impersonation` | L3 | The sharper form: A sealed it to B. The session key carries the proof, through four reusable steps: a key is started once, a join follows a start by the named sender unless the carrier knew the key first, the key you open under never reaches the carrier while the sender is honest, and what you open under a key the named sender sealed under it. |
 | `secrecy` | L2 | A sealed message never reaches the carrier's knowledge while both devices are their owners'. |
 | `no_ghost` | L16 | A roster change any member merges was committed by the group's admin, unless some device is someone else's. The carrier alone produces none. |
 | `join_means_started`, `start_key_secret` | | The two steps the prover reuses: a joined session with an honest sender was started by that sender for you and its key is secret whatever your own device did, and a started session's key is secret whenever the recipient is honest. |

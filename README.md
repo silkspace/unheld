@@ -131,7 +131,7 @@ Then break it. `u --profile me send you -c file:/tmp/blob` writes a blob of one 
 | | |
 |---|---|
 | `seal_only_to_a_genuine_key` | whatever the carrier injects, a seal reaches only a key the named peer generated and you verified (L3, L14), with no honesty assumption at all |
-| `opened_was_sealed` | what you open as from A, A sealed, unless A's device is someone else's; the sharper `no_impersonation`, that A sealed it to you, is stated and unproved |
+| `no_impersonation` | what you open as from A, A sealed to you, unless A's device is someone else's (L3) |
 | `secrecy` | a sealed message never enters the carrier's knowledge while both devices are their owners' |
 | `no_ghost` | a merged roster change was committed by the admin; the carrier alone produces none (L16) |
 
