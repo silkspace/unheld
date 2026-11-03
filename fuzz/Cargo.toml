@@ -1,0 +1,68 @@
+[package]
+name = "unheld-fuzz"
+description = "Fuzz targets for every parser that takes bytes from outside the device."
+version = "0.0.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+autobins = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+base64 = "0.22"
+unheld-blob = { path = "../crates/blob" }
+unheld-core = { path = "../crates/core" }
+
+[[bin]]
+name = "seeds"
+path = "src/seeds.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "blob_text"
+path = "fuzz_targets/blob_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "open"
+path = "fuzz_targets/open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import"
+path = "fuzz_targets/import.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "enrolment"
+path = "fuzz_targets/enrolment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "attach"
+path = "fuzz_targets/attach.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shares"
+path = "fuzz_targets/shares.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

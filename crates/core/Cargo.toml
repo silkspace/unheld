@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-unheld-blob = { path = "../blob" }
+unheld-blob = { path = "../blob", version = "0.0.1" }
 openmls.workspace = true
 openmls_rust_crypto.workspace = true
 openmls_basic_credential.workspace = true

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/blob", "crates/core", "crates/carriers", "crates/cli"]
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.0.1"

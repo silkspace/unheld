@@ -10,6 +10,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Fuzzing outputs
+fuzz/corpus/
+fuzz/world/
+fuzz/artifacts/
+fuzz/coverage/
+
 # Formal model outputs
 *.spthy.out
 tamarin-output/

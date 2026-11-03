@@ -10,9 +10,9 @@ name = "unheld"
 path = "src/main.rs"
 
 [dependencies]
-unheld-blob = { path = "../blob" }
-unheld-core = { path = "../core" }
-unheld-carriers = { path = "../carriers" }
+unheld-blob = { path = "../blob", version = "0.0.1" }
+unheld-core = { path = "../core", version = "0.0.1" }
+unheld-carriers = { path = "../carriers", version = "0.0.1" }
 clap.workspace = true
 rpassword.workspace = true
 qrcode.workspace = true

@@ -142,10 +142,14 @@ Two bindings in the welcome carry the weight: the recipient's identity key named
 Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe or the clipboard with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
-cargo test --workspace            # 26 tests: laws L1, L3, L4, L8, L10, L11, L14 to L19, L21 and the crate graph
+cargo test --workspace            # 27 tests: laws L1, L3, L4, L8, L10, L11, L14 to L19, L21 and the crate graph
 ./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
+./scripts/fuzz.sh 60              # six fuzz targets, one per parser that reads bytes from outside, 60 s each
+cargo deny check && cargo vet     # licences, advisories, banned crates, one registry; every crate accounted for
 ./scripts/demo.sh                 # two vaults, one file carrier, every refusal shown live
 ```
+
+The fuzz targets start from one real object of each kind, a welcome, a message, an introduction, an enrolment, an attach and a pair of shares, made by a world of three verified peers that lives under `fuzz/world`, and each asserts the law the parser serves: a blob is a bucket or refused, what opens came from a peer you verified, an introduction stages a peer as Pending and never as Verified, shares rebuild this identity or none.
 
 <details><summary>what the demo prints</summary>
 
@@ -201,7 +205,7 @@ no plaintext in vault
 
 Not yet: property tests per law, the ordered relay for large groups, reproducible builds, the log. See TRACE.md for which rows are green.
 
-Primitives are never written here. Ratchet: [OpenMLS](https://github.com/openmls/openmls). Tor: [Arti](https://gitlab.torproject.org/tpo/core/arti). Everything else: RustCrypto, pinned, `cargo vet`'d. We hand-roll the architecture and not one byte of crypto. See [`docs/decisions/001`](docs/decisions/001-ratchet-and-licence.md) for why not libsignal (licence, not safety).
+Primitives are never written here. Ratchet: [OpenMLS](https://github.com/openmls/openmls). Tor: [Arti](https://gitlab.torproject.org/tpo/core/arti). Everything else: RustCrypto, pinned, under `cargo deny` and `cargo vet`. We hand-roll the architecture and not one byte of crypto. See [`docs/decisions/001`](docs/decisions/001-ratchet-and-licence.md) for why not libsignal (licence, not safety).
 
 ## what it does not protect
 
