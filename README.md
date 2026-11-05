@@ -24,7 +24,7 @@ That first line is the whole threat model. Correctness is a square that commutes
 
 **Us too.** No verb takes an input we hold at runtime. No account, no remote config, no feature flag, no kill switch, no forced update. The only artefact we control is the binary, so: reproducible builds, independent builders attesting the hash, k-of-n maintainer signatures across jurisdictions, a public transparency log, and `install : Release × Log → () ⊕ Refuse`. If we're compelled, the fork works on day one. iOS is the exception, because Apple re-signs everything, and we say so.
 
-**Agents are correspondents.** `unheld mcp`, specified in docs/MCP.md ahead of its code, exposes `message_send` and `messages_read` to a model and deliberately has no `verify`, `enroll`, `rotate`, `split` or `wipe` tool, so a prompt injection cannot perform a ceremony. Your assistant uses your vault under a grant you made, over a carrier that sees ciphertext. The model vendor is just another `Blob → ()`.
+**Agents are correspondents.** `unheld mcp` exposes `message_send` and `messages_read` to a model, for the peers you granted with `unheld peers grant-agent`, and deliberately has no `verify`, `enroll`, `rotate`, `split` or `wipe` tool, so a prompt injection cannot perform a ceremony. Your assistant uses your vault under a grant you made, over a carrier that sees ciphertext. The model vendor is just another `Blob → ()`.
 
 ## try it
 
@@ -142,12 +142,12 @@ Two bindings in the welcome carry the weight: the recipient's identity key named
 Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe, the clipboard or a relay queue with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. The same core is a Python module with every verb, so a program in Python moves the bytes and holds no key. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
-cargo test --workspace            # 40 tests: laws L1, L3, L4, L8, L10 to L19, L21 and the crate graph
+cargo test --workspace            # 41 tests: laws L1, L3, L4, L8, L10 to L19, L21, the agent surface and the crate graph
 cd crates/py && uv sync && uv run pytest -q   # the same laws from Python, a list as the carrier
 ./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
 ./scripts/fuzz.sh 60              # seven fuzz targets, one per parser that reads bytes from outside, 60 s each
 cargo deny check && cargo vet     # licences, advisories, banned crates, one registry; every crate accounted for
-./scripts/demo.sh                 # two vaults, a file carrier and a relay, every refusal shown live
+./scripts/demo.sh                 # two vaults, a file carrier, a relay and an assistant, every refusal shown live
 ```
 
 The fuzz targets start from one real object of each kind, a welcome, a message, an introduction, an enrolment, an attach, a pair of shares and a relay frame, made by a world of three verified peers that lives under `fuzz/world`, and each asserts the law the parser serves: a blob is a bucket or refused, what opens came from a peer you verified, an introduction stages a peer as Pending and never as Verified, shares rebuild this identity or none, a frame is one exact encoding or malformed.
@@ -210,6 +210,14 @@ what the relay's disk holds:
   1024 bytes  00000000000000000001
   32 bytes  read
   32 bytes  write
+
+12. an assistant reads and answers for alice, for the one peer she granted, through the same binary
+✓ an agent may read and send with bob through unheld mcp
+revoke with `unheld peers revoke-agent`; the peer is not told, so tell them yourself
+  agent sees: {"gap": null, "messages": [{"from": "bob", "ref": 0, "session_started": false, "text": "is your assistant reading this?\n", "untrusted": true}], "next_start": null, "peer": "bob", "refused_blobs": 0, "total": 1, "withheld": 0}
+  agent sees: {"bytes": 1024, "peer": "bob"}
+  tools: peers_list message_send messages_read message_read intro_export carriers_list about (no verify, no enroll, no wipe)
+alice › yes, and it holds no key
 ```
 
 </details>
@@ -238,7 +246,7 @@ Read [KERNEL.md](KERNEL.md), find a law you can violate, open an issue with the 
 | [docs/MAINTAINERS.md](docs/MAINTAINERS.md) | hardware keys, builders, no agent holds a credential |
 | [docs/RELAY.md](docs/RELAY.md) | running a relay: one binary, a pinned address, queues of ciphertext and nothing else |
 | [docs/PYTHON.md](docs/PYTHON.md) | the core from Python: every verb, the program as the carrier, no key in reach |
-| [docs/CLI.md](docs/CLI.md) · [docs/MCP.md](docs/MCP.md) · [docs/INTEGRATION.md](docs/INTEGRATION.md) | the surfaces: the command line and the Python module in the tree, the agent surface and the other bindings as specifications their code must meet |
+| [docs/CLI.md](docs/CLI.md) · [docs/MCP.md](docs/MCP.md) · [docs/INTEGRATION.md](docs/INTEGRATION.md) | the surfaces: the command line, the agent server and the Python module in the tree, the other bindings as specifications their code must meet |
 | [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | how to work here |
 
 ## licence

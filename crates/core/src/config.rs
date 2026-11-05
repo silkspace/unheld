@@ -18,6 +18,8 @@ pub mod vault {
     pub const ARGON2_LANES: u32 = 1;
     /// Environment variable that supplies the passphrase for scripted use.
     pub const PASSPHRASE_ENV: &str = "UNHELD_PASSPHRASE";
+    /// The controlling terminal, for a process whose standard streams carry a protocol.
+    pub const TTY: &str = "/dev/tty";
     /// Environment variable that overrides the profiles directory.
     pub const HOME_ENV: &str = "UNHELD_HOME";
     pub const HOME_DIR_NAME: &str = ".unheld";

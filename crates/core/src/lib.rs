@@ -91,6 +91,9 @@ struct PeerRecord {
     intro: Option<Vec<u8>>,
     /// Sessions with this peer, by group id.
     groups: Vec<Vec<u8>>,
+    /// Whether the person has let an agent read and send with this peer (docs/decisions/007).
+    #[serde(default)]
+    agent: bool,
 }
 
 /// A group above two. The roster itself lives in the MLS group; this remembers the local name
@@ -110,6 +113,8 @@ pub struct Peer {
     pub fingerprint_prefix: String,
     pub sessions: usize,
     pub has_intro: bool,
+    /// The person has let an agent read and send with this peer through `unheld mcp`.
+    pub agent_access: bool,
 }
 
 /// A signed public bundle to hand over out of band.
@@ -406,6 +411,7 @@ impl Core {
                 previous,
                 state,
                 intro: Some(intro.0.clone()),
+                agent: self.state.peers.get(name).map(|p| p.agent).unwrap_or(false),
                 groups: self
                     .state
                     .peers
@@ -444,7 +450,17 @@ impl Core {
             fingerprint_prefix: prefix(&rec.signature_public),
             sessions: rec.groups.len(),
             has_intro: rec.intro.is_some(),
+            agent_access: rec.agent,
         })
+    }
+
+    /// Let an agent read and send with this peer through `unheld mcp`, or stop letting it. The
+    /// person's decision, made at the command line and nowhere else (docs/decisions/007).
+    pub fn grant_agent(&mut self, name: &str, granted: bool) -> Result<Peer, Refuse> {
+        let rec = self.state.peers.get_mut(name).ok_or(Refuse::UnknownPeer)?;
+        rec.agent = granted;
+        self.save()?;
+        self.peer(name)
     }
 
     pub fn peers(&self) -> Vec<Peer> {

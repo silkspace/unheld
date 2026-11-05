@@ -4,13 +4,12 @@ Every app with a chat already has a transport: a backend, a websocket, a push ch
 
 ## What you get
 
-In the tree today: `unheld-core`, a Rust crate, with `unheld-blob` holding the `Carrier` trait, `unheld-carriers` holding a file, a pipe, a clipboard and the relay queue, `unheld-relay`, the relay itself, one binary anyone runs (`docs/RELAY.md`), and `unheld-py`, the core compiled into a Python module with every verb (`docs/PYTHON.md`). A Rust service embeds the core, implements the trait over its own transport or points the relay carrier at a relay, and has the whole system below; a Python service imports the module and moves the bytes it returns over whatever it already has.
+In the tree today: `unheld-core`, a Rust crate, with `unheld-blob` holding the `Carrier` trait, `unheld-carriers` holding a file, a pipe, a clipboard and the relay queue, `unheld-relay`, the relay itself, one binary anyone runs (`docs/RELAY.md`), `unheld-py`, the core compiled into a Python module with every verb (`docs/PYTHON.md`), and `unheld mcp`, the same binary serving an assistant over stdio with no tool for any ceremony (`docs/MCP.md`). A Rust service embeds the core, implements the trait over its own transport or points the relay carrier at a relay, and has the whole system below; a Python service imports the module and moves the bytes it returns over whatever it already has.
 
 Specified, in this order, each a thin layer over the one crate so that anything that sees a plaintext stays Rust:
 
 | Surface | Form | For |
 |---------|------|-----|
-| `unheld mcp` | Model Context Protocol server, see docs/MCP.md | assistants |
 | `unheld-ffi` | UniFFI bindings: Swift package, Kotlin artefact | iOS and Android apps |
 | `unheld-wasm` | WebAssembly bundle with a TypeScript interface | web apps and Electron |
 | `unheld-ui` | verification, roster and key-change components for SwiftUI, Compose and React | the screens we do not let you leave out |

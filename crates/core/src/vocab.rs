@@ -37,6 +37,8 @@ pub enum Refuse {
     UnknownPeer,
     #[error("peer is not verified; run `verify` and compare the digits")]
     Unverified,
+    #[error("no agent grant for this peer; the person runs `unheld peers grant-agent <peer>`")]
+    NoGrant,
     #[error("peer's key has changed; run `verify` again")]
     Changed,
     #[error("fingerprint not confirmed")]

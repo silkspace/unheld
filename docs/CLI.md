@@ -12,7 +12,8 @@ The first client is a terminal program because two people with laptops are the m
 | `unheld intro export [--qr]` | `intro` | | The signed public bundle to hand over by any channel, as text or a QR code on the terminal. |
 | `unheld intro import <file \| ->` | | L3 | Stages a pending peer. Sending to a pending peer is refused. |
 | `unheld verify <name> [--qr]` | `verify` | L3 | Prints the pairwise safety number, waits for the other side to read theirs aloud, and asks whether every group of digits matched. The default answer is no. Only a yes mints a `Peer`. A QR scan can fill the comparison and cannot replace it. |
-| `unheld peers` | | L14, L18 | Every peer with its state: `Verified`, `Changed`, `Pending`, and in groups `Vouched by <name>`. |
+| `unheld peers` | | L14, L18 | Every peer with its state: `Verified`, `Changed`, `Pending`, and in groups `Vouched by <name>`; `agent` on a peer an assistant may read and send with. |
+| `unheld peers grant-agent <peer>`, `peers revoke-agent <peer>` | | L3 | Lets an assistant read and send with this peer through `unheld mcp`, or stops it. The person's decision, made here and nowhere else; no tool grants (`docs/decisions/007-agent-surface.md`). |
 | `unheld send <peer> [-c clipboard \| file \| stdout]` | `seal` | L4, L8, L14 | Reads the message from stdin or the editor, seals it, pads it to a bucket, and hands the blob to the chosen carrier. Refused for `Pending` or `Changed`. |
 | `unheld open [-c clipboard \| file \| stdin]` | `open` | L11, L12, L13 | Takes a blob from the carrier, trial-decrypts across sessions, shows the message with its sender, and marks any gap in the sequence. A replayed or reflected blob is refused and counted. |
 | `unheld log <peer> [--start N]` | | | Paged history with `total` and `next_start`; never truncated. Specified, not in the binary: the client stores no history yet, see `forget`. |
@@ -34,7 +35,7 @@ The first client is a terminal program because two people with laptops are the m
 | `unheld inspect [-c stdin \| file:<path>]` | | L7 | Reads a blob with no vault and no key and prints everything a carrier could learn from it, so the metadata surface is measured rather than assumed. |
 | `unheld relay new <address> <file>` | | L19 | Makes a queue on the relay at `address` and writes its identifier, both capabilities and a cursor to `file`; everyone in the conversation gets a copy and passes `-c relay:<file>`. How to run the relay is `docs/RELAY.md`. |
 | `unheld about` | `install` | L22, L23, L24 | This version and what is known about it. Until a release is in the log it prints the words unsigned, unlogged, unaudited; with one, its log entry, the builders who reproduced it, the signers and their jurisdictions, and the command to check it yourself. |
-| `unheld mcp` | | | Runs the Model Context Protocol server over stdio. Specified in docs/MCP.md, not in the binary. |
+| `unheld mcp -c <carrier>` | | L3, L11, L12, L22 | Serves the client to an assistant over stdio as a Model Context Protocol server, for the peers granted above, with no tool for any ceremony (docs/MCP.md). |
 
 ## Carriers
 

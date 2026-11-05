@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Two vaults, a file carrier and a relay, nobody in between. Runs the whole proof of concept in one terminal.
+# Two vaults, a file carrier, a relay and an assistant, nobody in between. Runs the whole proof of concept in one terminal.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release -q
@@ -71,3 +71,20 @@ echo "through a relay that cannot read this" | $U --profile alice send bob -c "r
 $U --profile bob open -c "relay:$D/queue-bob.json"
 echo "what the relay's disk holds:"
 ls -l "$D"/relay/queues/*/ | awk 'NR>1 {print "  " $5 " bytes  " $9}'
+
+say "12. an assistant reads and answers for alice, for the one peer she granted, through the same binary"
+$U --profile alice peers grant-agent bob
+echo "is your assistant reading this?" | $U --profile bob send alice -c "file:$D/agent.blob" 2>/dev/null
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"messages_read","arguments":{"peer":"bob"}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"message_send","arguments":{"peer":"bob","text":"yes, and it holds no key"}}}' \
+  '{"jsonrpc":"2.0","id":4,"method":"tools/list"}' \
+  | $U --profile alice mcp -c "file:$D/agent.blob" | python3 -c '
+import json, sys
+for line in sys.stdin:
+    r = json.loads(line)["result"]
+    if "tools" in r: print("  tools:", " ".join(t["name"] for t in r["tools"]), "(no verify, no enroll, no wipe)")
+    elif "structuredContent" in r: print("  agent sees:", json.dumps(r["structuredContent"]))
+'
+$U --profile bob open -c "file:$D/agent.blob"

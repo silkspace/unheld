@@ -31,6 +31,7 @@ pub enum Refuse {
     IdentityExists,
     UnknownPeer,
     Unverified,
+    NoGrant,
     Changed,
     NotConfirmed,
     NoIntro,
@@ -78,6 +79,7 @@ fn reason(r: &vocab::Refuse) -> Refuse {
         R::IdentityExists => Refuse::IdentityExists,
         R::UnknownPeer => Refuse::UnknownPeer,
         R::Unverified => Refuse::Unverified,
+        R::NoGrant => Refuse::NoGrant,
         R::Changed => Refuse::Changed,
         R::NotConfirmed => Refuse::NotConfirmed,
         R::NoIntro => Refuse::NoIntro,
@@ -215,11 +217,19 @@ pub struct Peer {
     fingerprint_prefix: String,
     sessions: usize,
     has_intro: bool,
+    agent_access: bool,
 }
 
 impl From<unheld_core::Peer> for Peer {
     fn from(p: unheld_core::Peer) -> Peer {
-        Peer { name: p.name, state: p.state.into(), fingerprint_prefix: p.fingerprint_prefix, sessions: p.sessions, has_intro: p.has_intro }
+        Peer {
+            name: p.name,
+            state: p.state.into(),
+            fingerprint_prefix: p.fingerprint_prefix,
+            sessions: p.sessions,
+            has_intro: p.has_intro,
+            agent_access: p.agent_access,
+        }
     }
 }
 
@@ -562,6 +572,12 @@ impl Core {
 
     fn peer(&self, py: Python<'_>, name: &str) -> PyResult<Peer> {
         Ok(self.inner.peer(name).or_refused(py)?.into())
+    }
+
+    /// Let an agent read and send with this peer through `unheld mcp`, or stop letting it. The
+    /// person's decision, never a program's on its own (docs/decisions/007).
+    fn grant_agent(&mut self, py: Python<'_>, name: &str, granted: bool) -> PyResult<Peer> {
+        Ok(self.inner.grant_agent(name, granted).or_refused(py)?.into())
     }
 
     fn peers(&self) -> Vec<Peer> {

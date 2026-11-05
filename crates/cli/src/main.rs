@@ -13,6 +13,8 @@ use unheld_core::config;
 use unheld_core::vocab::Refuse;
 use unheld_core::{Attach, Core, Enrolment, Intro, Outbound, Request, Share};
 
+mod mcp;
+
 #[derive(Parser)]
 #[command(name = "unheld", about = "Messaging where nobody but the two of you holds a key.")]
 struct Cli {
@@ -45,8 +47,11 @@ enum Cmd {
         #[arg(long)]
         qr: bool,
     },
-    /// List peers and their verification state.
-    Peers,
+    /// List peers and their verification state, or change what an agent may do with one.
+    Peers {
+        #[command(subcommand)]
+        cmd: Option<PeersCmd>,
+    },
     /// Encrypt a message (from stdin) to a verified peer and hand the blob to a carrier.
     Send {
         name: String,
@@ -89,11 +94,25 @@ enum Cmd {
     },
     /// This build and what is known about it.
     About,
+    /// Serve the client to an assistant over stdio as a Model Context Protocol server (docs/MCP.md).
+    Mcp {
+        /// Carrier the agent reads and sends through: `file:<path>`, `clipboard` or `relay:<queue file>`.
+        #[arg(short, long)]
+        carrier: String,
+    },
     /// Queues on a relay: the one carrier that orders, for groups above the small bound.
     Relay {
         #[command(subcommand)]
         cmd: RelayCmd,
     },
+}
+
+#[derive(Subcommand)]
+enum PeersCmd {
+    /// Let an agent read and send with this peer through `unheld mcp`. Your decision, made here and nowhere else.
+    GrantAgent { name: String },
+    /// Stop an agent reading or sending with this peer.
+    RevokeAgent { name: String },
 }
 
 #[derive(Subcommand)]
@@ -286,6 +305,16 @@ fn passphrase(confirm: bool) -> Result<String, Refuse> {
     Ok(p)
 }
 
+/// The passphrase for a process whose stdin is a protocol: the environment, or the controlling
+/// terminal when the host leaves one, and never the stream.
+fn passphrase_quietly() -> Result<String, Refuse> {
+    if let Ok(p) = std::env::var(config::vault::PASSPHRASE_ENV) {
+        return Ok(p);
+    }
+    let tty = rpassword::ConfigBuilder::new().input_file_path(config::vault::TTY).output_file_path(config::vault::TTY).build();
+    rpassword::prompt_password_with_config("vault passphrase: ", tty).map_err(|_| Refuse::VaultIo)
+}
+
 /// Ask the human a yes-or-no question. On a terminal, ask there. Otherwise read the piped
 /// answer, and only if the pipe held nothing fall back to the controlling terminal, so a wrapper
 /// that closed stdin still reaches the human while a script's `echo yes |` still works.
@@ -393,7 +422,18 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             let peer = core.verify(&name, confirmed)?;
             println!("{} {} is {}", style::ok("✓"), style::name(&peer.name), style::state(peer.state));
         }
-        Cmd::Peers => {
+        Cmd::Peers { cmd: Some(PeersCmd::GrantAgent { name }) } => {
+            let mut core = Core::unlock(&dir, &passphrase(false)?)?;
+            let p = core.grant_agent(&name, true)?;
+            println!("{} an agent may read and send with {} through {}", style::ok("✓"), style::name(&p.name), style::dim("unheld mcp"));
+            println!("{}", style::dim("revoke with `unheld peers revoke-agent`; the peer is not told, so tell them yourself"));
+        }
+        Cmd::Peers { cmd: Some(PeersCmd::RevokeAgent { name }) } => {
+            let mut core = Core::unlock(&dir, &passphrase(false)?)?;
+            let p = core.grant_agent(&name, false)?;
+            println!("{} no agent reads or sends with {}", style::ok("✓"), style::name(&p.name));
+        }
+        Cmd::Peers { cmd: None } => {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
             let peers = core.peers();
             if cli.json {
@@ -408,7 +448,12 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                         style::state(p.state),
                         style::name(&p.name),
                         style::hash(&p.fingerprint_prefix),
-                        style::dim(&format!("sessions {}  intro {}", p.sessions, if p.has_intro { "unused" } else { "consumed" }))
+                        style::dim(&format!(
+                            "sessions {}  intro {}{}",
+                            p.sessions,
+                            if p.has_intro { "unused" } else { "consumed" },
+                            if p.agent_access { "  agent" } else { "" }
+                        ))
                     );
                 }
             }
@@ -539,6 +584,11 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             println!("{} {}  {}", style::head("unheld"), env!("CARGO_PKG_VERSION"), style::dim("proof of concept; unsigned, unlogged, unaudited"));
             println!("{} OpenMLS, {:?}", style::dim("ratchet "), config::mls::CIPHERSUITE);
             println!("{} a device someone else controls, a careless or hostile correspondent, a coerced person", style::warn("not protected:"));
+        }
+        Cmd::Mcp { carrier: spec } => {
+            let c = carrier(&spec)?;
+            let core = Core::unlock(&dir, &passphrase_quietly()?)?;
+            mcp::serve(core, c, &spec)?;
         }
     }
     Ok(())

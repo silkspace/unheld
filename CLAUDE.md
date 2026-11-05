@@ -33,11 +33,10 @@ unheld/
     src/vocab.rs          every closed set as an enum (PeerState, Refuse)
     src/vault.rs          Argon2id + XChaCha20-Poly1305 at rest
   crates/carriers/        Rust: file and stdio carriers; depends on blob and nothing secret
-  crates/cli/             Rust: the `unheld` binary; tests/rules.rs checks the crate graph
+  crates/cli/             Rust: the `unheld` binary and `unheld mcp` (src/mcp.rs); tests/rules.rs checks the crate graph
   crates/relay/           Rust: the relay, one static binary, and the relay carrier (docs/RELAY.md)
   crates/py/              Rust: the core as a Python module over PyO3, with its stub and tests (docs/PYTHON.md)
   transport/              planned: Arti (Tor) embedding, pluggable transports
-  mcp/                    planned: the Model Context Protocol server, same binary (`unheld mcp`)
   ffi/ wasm/              planned: UniFFI and WebAssembly bindings (docs/INTEGRATION.md)
   shells/                 later: desktop and mobile shells over core
   tooling/                planned, Python under UV: traffic simulations, doc generation, release tooling

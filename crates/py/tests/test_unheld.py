@@ -41,6 +41,9 @@ def test_verify_is_the_only_constructor_and_a_blob_opens_once(tmp_path: Path) ->
     assert alice.fingerprint("bob") == bob.fingerprint("alice")
     assert alice.verify("bob", confirmed=True).state is unheld.PeerState.Verified
     bob.verify("alice", confirmed=True)
+    assert not alice.peer("bob").agent_access
+    assert alice.grant_agent("bob", True).agent_access
+    assert not alice.grant_agent("bob", False).agent_access
 
     blob = alice.seal("bob", b"hello from python")
     assert len(blob) in unheld.BUCKETS

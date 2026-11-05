@@ -503,7 +503,7 @@ impl Core {
             needs_update: Vec::new(),
         });
         for (name, key, previous, state) in bundle.peers {
-            self.state.peers.insert(name, crate::PeerRecord { signature_public: key, previous, state, intro: None, groups: Vec::new() });
+            self.state.peers.insert(name, crate::PeerRecord { signature_public: key, previous, state, intro: None, groups: Vec::new(), agent: false });
         }
         self.state.expected = bundle.groups;
         self.state.pending = None;

@@ -44,7 +44,7 @@ Every method is one core verb, named as the command line names it, with the laws
 | `Core.create(dir, passphrase, name)`, `Core.unlock(dir, passphrase)` | `gen`, `unlock` | L20 |
 | `core.intro()`, `core.import_intro(name, text)` | `intro` | L3 |
 | `core.fingerprint(name)`, `core.verify(name, confirmed)` | `verify` | L3 |
-| `core.peer(name)`, `core.peers()` | | L14, L18 |
+| `core.peer(name)`, `core.peers()`, `core.grant_agent(name, granted)` | | L14, L18 |
 | `core.seal(name, body)`, `core.open(blob)` | `seal`, `open` | L3, L4, L8, L11, L12, L13, L14 |
 | `core.forget(name)`, `core.set_duress(text)`, `unheld.wipe(dir)` | `forget`, `wipe` | L10 |
 | `core.group_new(name, peers, ordered)`, `group_add`, `group_remove`, `group_seal`, `roster`, `groups`, `group_rename` | `start`, `add`, `remove`, `seal` | L16 to L19 |
