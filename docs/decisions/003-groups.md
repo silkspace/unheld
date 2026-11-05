@@ -1,6 +1,6 @@
 # 003: groups above two without a server
 
-**Status.** Accepted for the overlay; revisited when the ordered relay exists.
+**Status.** Accepted for the overlay; the ordered relay is designed in `006-relay.md`.
 
 **Laws touched.** L16 (no ghost), L17 (membership secrecy), L18 (vouch is not verify), L19 (ordered or small).
 

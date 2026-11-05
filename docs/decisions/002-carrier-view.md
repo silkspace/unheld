@@ -1,6 +1,6 @@
 # 002: what a carrier can read through the padding
 
-**Status.** Accepted for the overlay; to be revisited with the relay queue design.
+**Status.** Accepted for the overlay; the relay queue design, `006-relay.md`, adds queue-level linkage of the same kind and accepts it on the same terms.
 
 **Laws touched.** L7 (unlinkability) is stated precisely rather than loosely; L13 is unchanged; the introduction carries no name.
 
