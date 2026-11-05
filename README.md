@@ -24,7 +24,7 @@ That first line is the whole threat model. Correctness is a square that commutes
 
 **Us too.** No verb takes an input we hold at runtime. No account, no remote config, no feature flag, no kill switch, no forced update. The only artefact we control is the binary, so: reproducible builds, independent builders attesting the hash, k-of-n maintainer signatures across jurisdictions, a public transparency log, and `install : Release × Log → () ⊕ Refuse`. If we're compelled, the fork works on day one. iOS is the exception, because Apple re-signs everything, and we say so.
 
-**Agents are correspondents.** `unheld mcp` exposes `message_send` and `messages_read` to a model and deliberately has no `verify`, `enroll`, `rotate`, `split` or `wipe` tool, so a prompt injection cannot perform a ceremony. Your assistant uses your vault under a grant you made, over a carrier that sees ciphertext. The model vendor is just another `Blob → ()`.
+**Agents are correspondents.** `unheld mcp`, specified in docs/MCP.md ahead of its code, exposes `message_send` and `messages_read` to a model and deliberately has no `verify`, `enroll`, `rotate`, `split` or `wipe` tool, so a prompt injection cannot perform a ceremony. Your assistant uses your vault under a grant you made, over a carrier that sees ciphertext. The model vendor is just another `Blob → ()`.
 
 ## try it
 
@@ -225,7 +225,7 @@ Read [KERNEL.md](KERNEL.md), find a law you can violate, open an issue with the 
 | [formal/](formal/README.md) | the policy layer as a Tamarin theory: lemmas, the two attacks the welcome's bindings exclude, what is left out |
 | [OATH.md](OATH.md) | what the humans promise, signed with release keys |
 | [docs/MAINTAINERS.md](docs/MAINTAINERS.md) | hardware keys, builders, no agent holds a credential |
-| [docs/CLI.md](docs/CLI.md) · [docs/MCP.md](docs/MCP.md) · [docs/INTEGRATION.md](docs/INTEGRATION.md) | the three surfaces |
+| [docs/CLI.md](docs/CLI.md) · [docs/MCP.md](docs/MCP.md) · [docs/INTEGRATION.md](docs/INTEGRATION.md) | the three surfaces: the command line in the tree, the agent and embedding surfaces as specifications their code must meet |
 | [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | how to work here |
 
 ## licence

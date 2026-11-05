@@ -1,5 +1,7 @@
 # The Model Context Protocol server
 
+**Status.** Specification. The tool surface is fixed here and reviewed against the laws before the server is written (TRACE.md, R1); the binary does not yet have `unheld mcp`.
+
 `unheld mcp` exposes the client to an agent over stdio, so that an assistant can send and read unheld messages on a person's behalf, and so that two agents can talk to each other through a channel nobody else can read. It is the same Rust binary as the command line, because anything that sees a plaintext is Rust here, and it follows the house rule: models decide, code enforces, and the ceremonies a human must perform have no tool at all.
 
 ## Tools offered

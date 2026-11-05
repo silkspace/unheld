@@ -4,18 +4,21 @@ Every app with a chat already has a transport: a backend, a websocket, a push ch
 
 ## What you get
 
+In the tree today: `unheld-core`, a Rust crate, with `unheld-blob` holding the `Carrier` trait and `unheld-carriers` holding a file, a pipe and a clipboard. A Rust service embeds the core, implements the trait over its own transport, and has the whole system below.
+
+Specified, in this order, each a thin layer over the one crate so that anything that sees a plaintext stays Rust:
+
 | Surface | Form | For |
 |---------|------|-----|
-| `unheld-core` | Rust crate | Rust services and the other bindings below |
+| `unheld-py` | Python wheel built with PyO3, installed with `uv add unheld` | agent frameworks and backends that orchestrate but never hold keys |
+| `unheld mcp` | Model Context Protocol server, see docs/MCP.md | assistants |
 | `unheld-ffi` | UniFFI bindings: Swift package, Kotlin artefact | iOS and Android apps |
 | `unheld-wasm` | WebAssembly bundle with a TypeScript interface | web apps and Electron |
-| `unheld-py` | Python wheel built with PyO3, installed with `uv add unheld` | agent frameworks and backends that orchestrate but never hold keys |
-| `unheld mcp` | Model Context Protocol server | assistants, see docs/MCP.md |
-| `unheld-ui` (later) | verification, roster and key-change components for SwiftUI, Compose and React | the screens we do not let you leave out |
+| `unheld-ui` | verification, roster and key-change components for SwiftUI, Compose and React | the screens we do not let you leave out |
 
 ## What you implement
 
-One trait with two methods. `put(blob)` sends a fixed-size byte array over your channel to the other party; `get()` yields the next one. You may set `ordered = true` if your backend sequences messages, which lets groups above the small-group threshold form (L19). That is the entire contract, and the trait is defined in a crate that cannot depend on any secret type, so your transport code cannot reach a key even by accident (L2).
+One trait with two methods. `put(blob)` sends a fixed-size byte array over your channel to the other party; `get()` yields the next one. You may answer `true` from `ordered()` if your backend sequences messages, which lets groups above the small-group threshold form (L19). That is the entire contract, and the trait is defined in a crate that cannot depend on any secret type, so your transport code cannot reach a key even by accident (L2).
 
 ## What you cannot leave out
 

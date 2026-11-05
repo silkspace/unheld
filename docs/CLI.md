@@ -1,6 +1,6 @@
 # The command-line client
 
-The first client is a terminal program because two people with laptops are the minimum viable product (TRACE.md) and because every later shell is this surface with pixels. Each command is one kernel verb or a view over the vault, each is total and fails closed with exit code 2 and a sentence, and there is no flag anywhere that weakens a check. `--json` on any command emits the typed result for scripts and for the MCP server, which is the same binary.
+The first client is a terminal program because two people with laptops are the minimum viable product (TRACE.md) and because every later shell is this surface with pixels. Each command is one kernel verb or a view over the vault, each is total and fails closed with exit code 2 and a sentence, and there is no flag anywhere that weakens a check. `--json` on any command emits the typed result for scripts and for the MCP server specified in docs/MCP.md, which will be the same binary.
 
 ## Commands
 
@@ -15,7 +15,7 @@ The first client is a terminal program because two people with laptops are the m
 | `unheld peers` | | L14, L18 | Every peer with its state: `Verified`, `Changed`, `Pending`, and in groups `Vouched by <name>`. |
 | `unheld send <peer> [-c clipboard \| file \| stdout]` | `seal` | L4, L8, L14 | Reads the message from stdin or the editor, seals it, pads it to a bucket, and hands the blob to the chosen carrier. Refused for `Pending` or `Changed`. |
 | `unheld open [-c clipboard \| file \| stdin]` | `open` | L11, L12, L13 | Takes a blob from the carrier, trial-decrypts across sessions, shows the message with its sender, and marks any gap in the sequence. A replayed or reflected blob is refused and counted. |
-| `unheld log <peer> [--start N]` | | | Paged history with `total` and `next_start`; never truncated. |
+| `unheld log <peer> [--start N]` | | | Paged history with `total` and `next_start`; never truncated. Specified, not in the binary: the client stores no history yet, see `forget`. |
 | `unheld forget <peer \| group>` | `forget` | L10 | Ends every session with the peer and deletes its keys; the peer stays verified and the next message starts a fresh session from a fresh introduction. For a group it deletes the local keys and leaves; the others list you until the admin removes you. The client stores no message history, so there is nothing else to forget. |
 | `unheld duress` | | L10 | Sets a duress passphrase. Unlocking with it destroys the vault and answers exactly as a wrong passphrase would. |
 | `unheld wipe` | `wipe` | L10 | Overwrites and removes the vault after a yes. |
@@ -32,8 +32,8 @@ The first client is a terminal program because two people with laptops are the m
 | `unheld recover split <k> <n>` | `split` | L21 | Shows `n` shares of the identity key one at a time, each once, clearing the screen between them, and writes nothing: the vault is byte for byte what it was. Any `k` rebuild the key; `k - 1` are nothing. |
 | `unheld recover join <name> [files...]` | `join` | L21 | On a device with no vault: rebuilds the identity from `k` shares (files, or one per line on stdin) and makes a new vault with a fresh device key and no peers. Peers who verified you still do, since the key is the same; their names, the sessions and the device list are gone with the old vault. An altered share is refused and no vault is made. |
 | `unheld inspect [-c stdin \| file:<path>]` | | L7 | Reads a blob with no vault and no key and prints everything a carrier could learn from it, so the metadata surface is measured rather than assumed. |
-| `unheld about` | `install` | L22, L23, L24 | This version, its log entry, the builders who reproduced it, the signers and their jurisdictions, and the command to check it yourself. |
-| `unheld mcp` | | | Runs the Model Context Protocol server over stdio (docs/MCP.md). |
+| `unheld about` | `install` | L22, L23, L24 | This version and what is known about it. Until a release is in the log it prints the words unsigned, unlogged, unaudited; with one, its log entry, the builders who reproduced it, the signers and their jurisdictions, and the command to check it yourself. |
+| `unheld mcp` | | | Runs the Model Context Protocol server over stdio. Specified in docs/MCP.md, not in the binary. |
 
 ## Carriers in the first release
 
