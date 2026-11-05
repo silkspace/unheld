@@ -1,0 +1,15 @@
+[package]
+name = "unheld-py"
+description = "The Python module: the core's verbs, one to one, over PyO3."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "unheld_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+unheld-blob = { path = "../blob", version = "0.0.1" }
+unheld-core = { path = "../core", version = "0.0.1" }
+pyo3 = { version = "0.30", features = ["abi3-py310"] }

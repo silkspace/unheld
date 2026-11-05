@@ -48,7 +48,7 @@ fn blob_crate_depends_on_nothing_secret() {
 /// Rule 6: no unsafe anywhere in the workspace.
 #[test]
 fn every_crate_forbids_unsafe() {
-    for rel in ["crates/blob/src/lib.rs", "crates/core/src/lib.rs", "crates/carriers/src/lib.rs", "crates/cli/src/main.rs", "crates/relay/src/lib.rs", "crates/relay/src/main.rs"] {
+    for rel in ["crates/blob/src/lib.rs", "crates/core/src/lib.rs", "crates/carriers/src/lib.rs", "crates/cli/src/main.rs", "crates/relay/src/lib.rs", "crates/relay/src/main.rs", "crates/py/src/lib.rs"] {
         assert!(read(rel).starts_with("#![forbid(unsafe_code)]"), "{rel} does not forbid unsafe");
     }
 }

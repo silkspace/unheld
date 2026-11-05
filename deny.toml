@@ -47,7 +47,7 @@ allow-wildcard-paths = true
 deny = [
     # L2 as a build failure: the crate that holds keys is reachable from the client alone, so
     # the carriers crate, or anything else, that came to depend on it fails here.
-    { crate = "unheld-core", wrappers = ["unheld"], reason = "keys and plaintext stay in core; only the client composes it" },
+    { crate = "unheld-core", wrappers = ["unheld", "unheld-py"], reason = "keys and plaintext stay in core; only the client and the Python module compose it" },
     { crate = "openssl", reason = "no C cryptography; MLS is RustCrypto and TLS is graviola" },
     { crate = "ring", reason = "no C cryptography; MLS is RustCrypto and TLS is graviola" },
     { crate = "reqwest", reason = "no network stack in these crates; the carriers crate alone moves bytes" },

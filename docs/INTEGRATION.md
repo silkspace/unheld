@@ -4,13 +4,12 @@ Every app with a chat already has a transport: a backend, a websocket, a push ch
 
 ## What you get
 
-In the tree today: `unheld-core`, a Rust crate, with `unheld-blob` holding the `Carrier` trait, `unheld-carriers` holding a file, a pipe, a clipboard and the relay queue, and `unheld-relay`, the relay itself, one binary anyone runs (`docs/RELAY.md`). A Rust service embeds the core, implements the trait over its own transport or points the relay carrier at a relay, and has the whole system below.
+In the tree today: `unheld-core`, a Rust crate, with `unheld-blob` holding the `Carrier` trait, `unheld-carriers` holding a file, a pipe, a clipboard and the relay queue, `unheld-relay`, the relay itself, one binary anyone runs (`docs/RELAY.md`), and `unheld-py`, the core compiled into a Python module with every verb (`docs/PYTHON.md`). A Rust service embeds the core, implements the trait over its own transport or points the relay carrier at a relay, and has the whole system below; a Python service imports the module and moves the bytes it returns over whatever it already has.
 
 Specified, in this order, each a thin layer over the one crate so that anything that sees a plaintext stays Rust:
 
 | Surface | Form | For |
 |---------|------|-----|
-| `unheld-py` | Python wheel built with PyO3, installed with `uv add unheld` | agent frameworks and backends that orchestrate but never hold keys |
 | `unheld mcp` | Model Context Protocol server, see docs/MCP.md | assistants |
 | `unheld-ffi` | UniFFI bindings: Swift package, Kotlin artefact | iOS and Android apps |
 | `unheld-wasm` | WebAssembly bundle with a TypeScript interface | web apps and Electron |
@@ -18,7 +17,7 @@ Specified, in this order, each a thin layer over the one crate so that anything 
 
 ## What you implement
 
-One trait with two methods. `put(blob)` sends a fixed-size byte array over your channel to the other party; `get()` yields the next one. You may answer `true` from `ordered()` if your backend sequences messages, which lets groups above the small-group threshold form (L19). That is the entire contract, and the trait is defined in a crate that cannot depend on any secret type, so your transport code cannot reach a key even by accident (L2).
+One trait with two methods. `put(blob)` sends a fixed-size byte array over your channel to the other party; `get()` yields the next one. You may answer `true` from `ordered()` if your backend sequences messages, which lets groups above the small-group threshold form (L19). That is the entire contract, and the trait is defined in a crate that cannot depend on any secret type, so your transport code cannot reach a key even by accident (L2). From Python there is no trait to implement, because the program is already in the trait's position: a verb that seals returns `bytes`, a verb that opens takes them back, and `ordered` is passed as an argument where it matters.
 
 ## What you cannot leave out
 

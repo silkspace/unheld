@@ -8,7 +8,7 @@ A communications platform designed from a written threat model (IDEA.md) rather 
 
 ## Non-negotiables in one breath
 
-No cryptographic primitive is written here. No plaintext or key crosses the core's API, appears in a log, an error, a fixture or a chat. The relay is treated as hostile. No telemetry or third-party SDK enters a client. Everything fails closed. Nothing that touches a secret is written in anything but Rust, and Python is for tooling only. Any change near a key starts as a design note in `docs/decisions/` before code.
+No cryptographic primitive is written here. No plaintext or key crosses the core's API, appears in a log, an error, a fixture or a chat. The relay is treated as hostile. No telemetry or third-party SDK enters a client. Everything fails closed. Nothing that touches a secret is written in anything but Rust; the Python module is that Rust compiled for the interpreter, and Python itself is for its tests and for tooling. Any change near a key starts as a design note in `docs/decisions/` before code.
 
 ## Layout (planned; create as phases land)
 
@@ -34,10 +34,11 @@ unheld/
     src/vault.rs          Argon2id + XChaCha20-Poly1305 at rest
   crates/carriers/        Rust: file and stdio carriers; depends on blob and nothing secret
   crates/cli/             Rust: the `unheld` binary; tests/rules.rs checks the crate graph
-  relay/                  planned: the store-and-forward relay, one static binary
+  crates/relay/           Rust: the relay, one static binary, and the relay carrier (docs/RELAY.md)
+  crates/py/              Rust: the core as a Python module over PyO3, with its stub and tests (docs/PYTHON.md)
   transport/              planned: Arti (Tor) embedding, pluggable transports
   mcp/                    planned: the Model Context Protocol server, same binary (`unheld mcp`)
-  ffi/ wasm/ py/          planned: UniFFI, WebAssembly and PyO3 bindings (docs/INTEGRATION.md)
+  ffi/ wasm/              planned: UniFFI and WebAssembly bindings (docs/INTEGRATION.md)
   shells/                 later: desktop and mobile shells over core
   tooling/                planned, Python under UV: traffic simulations, doc generation, release tooling
     pyproject.toml
@@ -70,12 +71,11 @@ cargo vet                                   # crate review status (install cargo
 # planned: cargo test -p adversarial, cargo fuzz run <target>, cargo xtask repro
 ```
 
-Python tooling (planned, from `tooling/`):
+The Python module (from `crates/py`; the Rust toolchain must be on the path):
 
 ```bash
-uv sync --extra dev
-uv run pytest -q
-uv run ruff check .
+uv sync              # builds the module into .venv with maturin
+uv run pytest -q     # the laws from Python
 ```
 
 Running two clients against a local relay (Phase 1 target):

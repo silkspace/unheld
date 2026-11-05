@@ -139,10 +139,11 @@ Two bindings in the welcome carry the weight: the recipient's identity key named
 
 ## status
 
-Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe, the clipboard or a relay queue with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
+Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe, the clipboard or a relay queue with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. The same core is a Python module with every verb, so a program in Python moves the bytes and holds no key. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
 cargo test --workspace            # 40 tests: laws L1, L3, L4, L8, L10 to L19, L21 and the crate graph
+cd crates/py && uv sync && uv run pytest -q   # the same laws from Python, a list as the carrier
 ./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
 ./scripts/fuzz.sh 60              # seven fuzz targets, one per parser that reads bytes from outside, 60 s each
 cargo deny check && cargo vet     # licences, advisories, banned crates, one registry; every crate accounted for
@@ -236,7 +237,8 @@ Read [KERNEL.md](KERNEL.md), find a law you can violate, open an issue with the 
 | [OATH.md](OATH.md) | what the humans promise, signed with release keys |
 | [docs/MAINTAINERS.md](docs/MAINTAINERS.md) | hardware keys, builders, no agent holds a credential |
 | [docs/RELAY.md](docs/RELAY.md) | running a relay: one binary, a pinned address, queues of ciphertext and nothing else |
-| [docs/CLI.md](docs/CLI.md) · [docs/MCP.md](docs/MCP.md) · [docs/INTEGRATION.md](docs/INTEGRATION.md) | the three surfaces: the command line in the tree, the agent and embedding surfaces as specifications their code must meet |
+| [docs/PYTHON.md](docs/PYTHON.md) | the core from Python: every verb, the program as the carrier, no key in reach |
+| [docs/CLI.md](docs/CLI.md) · [docs/MCP.md](docs/MCP.md) · [docs/INTEGRATION.md](docs/INTEGRATION.md) | the surfaces: the command line and the Python module in the tree, the agent surface and the other bindings as specifications their code must meet |
 | [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | how to work here |
 
 ## licence

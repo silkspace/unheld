@@ -59,7 +59,7 @@ Eight rules every crate is held to, and `crates/cli/tests/rules.rs` checks the s
 - **"Just for the demo" is forever.** A direct TLS path with no padding "for now", a debug flag that prints a plaintext, a relay that logs IPs to diagnose a problem: each becomes the default by the time anyone notices. Do not add them; add a test fixture instead.
 - **The renderer is the attack surface.** Anything that turns bytes into pixels (text layout, images, link previews, emoji) has been the entry point for most real-world messenger exploits. The renderer runs in its own sandbox with no network and no key access, link previews are off, and media is decoded by a hardened library or not at all.
 - **Linked devices are how Signal got phished.** Adding a device always requires a confirmation on an existing device, shows the new device's fingerprint there, and never works from a single scanned code.
-- **Python is for tooling only.** Nothing that touches a key or a plaintext is written in Python here. Python under UV runs simulations of traffic analysis, documentation generation and release tooling, and that is all.
+- **Python holds no secret.** Nothing that touches a key is written in Python here. The Python module in `crates/py` is the Rust core compiled for the interpreter, its verbs are the core's, and the only Python in the tree is its type stub, its tests, and tooling under UV for simulations of traffic analysis, documentation generation and release tooling.
 
 ## Commits
 
