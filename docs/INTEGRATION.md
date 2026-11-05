@@ -4,7 +4,7 @@ Every app with a chat already has a transport: a backend, a websocket, a push ch
 
 ## What you get
 
-In the tree today: `unheld-core`, a Rust crate, with `unheld-blob` holding the `Carrier` trait and `unheld-carriers` holding a file, a pipe and a clipboard. A Rust service embeds the core, implements the trait over its own transport, and has the whole system below.
+In the tree today: `unheld-core`, a Rust crate, with `unheld-blob` holding the `Carrier` trait, `unheld-carriers` holding a file, a pipe, a clipboard and the relay queue, and `unheld-relay`, the relay itself, one binary anyone runs (`docs/RELAY.md`). A Rust service embeds the core, implements the trait over its own transport or points the relay carrier at a relay, and has the whole system below.
 
 Specified, in this order, each a thin layer over the one crate so that anything that sees a plaintext stays Rust:
 

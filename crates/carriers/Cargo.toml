@@ -7,5 +7,6 @@ license.workspace = true
 
 [dependencies]
 unheld-blob = { path = "../blob", version = "0.0.1" }
+unheld-relay = { path = "../relay", version = "0.0.1" }
 thiserror.workspace = true
 arboard.workspace = true

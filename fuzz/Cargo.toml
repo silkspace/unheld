@@ -15,6 +15,7 @@ libfuzzer-sys = "0.4"
 base64 = "0.22"
 unheld-blob = { path = "../crates/blob" }
 unheld-core = { path = "../crates/core" }
+unheld-relay = { path = "../crates/relay" }
 
 [[bin]]
 name = "seeds"
@@ -66,3 +67,10 @@ bench = false
 
 [profile.release]
 debug = 1
+
+[[bin]]
+name = "relay_wire"
+path = "fuzz_targets/relay_wire.rs"
+test = false
+doc = false
+bench = false

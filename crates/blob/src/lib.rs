@@ -111,6 +111,12 @@ pub enum CarrierError {
     Blob(#[from] BlobError),
     #[error("carrier has nothing to deliver")]
     Empty,
+    /// An ordered carrier delivered a number that is not the next one (L12).
+    #[error("carrier delivered out of order: expected {expected}, got {got}")]
+    Disordered { expected: u64, got: u64 },
+    /// The carrier would not move the blob, and says why in one fixed sentence.
+    #[error("carrier refused: {0}")]
+    Refused(&'static str),
 }
 
 /// Moves blobs. Mentions no other type (KERNEL.md, L2).

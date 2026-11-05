@@ -78,7 +78,7 @@ g-bd68bc2320 epoch 1  admin me
 [g-bd68bc2320] me › hello both
 ```
 
-`you` never met `them`, and the client says so every time, including before every `group send`. `group add team more -c file:/tmp/c -w file:/tmp/wm` writes a commit for the members and a welcome for the newcomer; `group remove team them -c file:/tmp/r` writes a commit everyone opens as a line saying who removed whom, after which `them` opens nothing further. Only the one who started the group changes its roster, and every other client refuses a roster change from anyone else before merging it. Above eight people the file, clipboard and pipe carriers are refused, because they cannot order commits, which is the whole reason large groups usually need a server.
+`you` never met `them`, and the client says so every time, including before every `group send`. `group add team more -c file:/tmp/c -w file:/tmp/wm` writes a commit for the members and a welcome for the newcomer; `group remove team them -c file:/tmp/r` writes a commit everyone opens as a line saying who removed whom, after which `them` opens nothing further. Only the one who started the group changes its roster, and every other client refuses a roster change from anyone else before merging it. Above eight people the file, clipboard and pipe carriers are refused, because they cannot order commits, which is the whole reason large groups usually need a server; `-c relay:<file>` is the carrier that orders, a queue on a relay that holds ciphertext of a fixed size and nothing else, and `unheld relay new` makes one (docs/RELAY.md).
 
 A second device is a second profile here. On it, `devices request` makes a vault and prints a request and sixty digits; on the first, `devices enroll phone <request>` prints the digits the request's key makes and asks whether the new device shows exactly them:
 
@@ -139,17 +139,17 @@ Two bindings in the welcome carry the weight: the recipient's identity key named
 
 ## status
 
-Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe or the clipboard with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
+Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe, the clipboard or a relay queue with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
-cargo test --workspace            # 27 tests: laws L1, L3, L4, L8, L10, L11, L14 to L19, L21 and the crate graph
+cargo test --workspace            # 40 tests: laws L1, L3, L4, L8, L10 to L19, L21 and the crate graph
 ./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
-./scripts/fuzz.sh 60              # six fuzz targets, one per parser that reads bytes from outside, 60 s each
+./scripts/fuzz.sh 60              # seven fuzz targets, one per parser that reads bytes from outside, 60 s each
 cargo deny check && cargo vet     # licences, advisories, banned crates, one registry; every crate accounted for
-./scripts/demo.sh                 # two vaults, one file carrier, every refusal shown live
+./scripts/demo.sh                 # two vaults, a file carrier and a relay, every refusal shown live
 ```
 
-The fuzz targets start from one real object of each kind, a welcome, a message, an introduction, an enrolment, an attach and a pair of shares, made by a world of three verified peers that lives under `fuzz/world`, and each asserts the law the parser serves: a blob is a bucket or refused, what opens came from a peer you verified, an introduction stages a peer as Pending and never as Verified, shares rebuild this identity or none.
+The fuzz targets start from one real object of each kind, a welcome, a message, an introduction, an enrolment, an attach, a pair of shares and a relay frame, made by a world of three verified peers that lives under `fuzz/world`, and each asserts the law the parser serves: a blob is a bucket or refused, what opens came from a peer you verified, an introduction stages a peer as Pending and never as Verified, shares rebuild this identity or none, a frame is one exact encoding or malformed.
 
 <details><summary>what the demo prints</summary>
 
@@ -199,11 +199,21 @@ Verified bob              bd3acd78b1  sessions 1  intro consumed
 Verified alice            64fa0a834b  sessions 1  intro unused
 there is no header. first 8 bytes are the salt: 8ccfc8993f3fece6
 no plaintext in vault
+
+11. a relay: the one carrier that orders, and it holds ciphertext of a fixed size and nothing else
+relay address: unheld-relay://127.0.0.1:14443#093e0438c00155d0d1ed36f43b9f640cdf660cdee87cb0676d38981f7f5fcf1b
+✓ queue created  unheld-relay://127.0.0.1:14443/d12af39d75fc9594f3f359de9d5d858b6446d76438362019e4a7a0b79f16e047#093e0438c00155d0d1ed36f43b9f640cdf660cdee87cb0676d38981f7f5fcf1b
+hand queue.json to everyone in the conversation; each passes -c relay:queue.json
+alice › through a relay that cannot read this
+what the relay's disk holds:
+  1024 bytes  00000000000000000001
+  32 bytes  read
+  32 bytes  write
 ```
 
 </details>
 
-Not yet: property tests per law, the ordered relay for large groups, reproducible builds, the log. See TRACE.md for which rows are green.
+Not yet: property tests per law, queue rotation and the onion transport for the relay, reproducible builds, the log. See TRACE.md for which rows are green.
 
 Primitives are never written here. Ratchet: [OpenMLS](https://github.com/openmls/openmls). Tor: [Arti](https://gitlab.torproject.org/tpo/core/arti). Everything else: RustCrypto, pinned, under `cargo deny` and `cargo vet`. We hand-roll the architecture and not one byte of crypto. See [`docs/decisions/001`](docs/decisions/001-ratchet-and-licence.md) for why not libsignal (licence, not safety).
 
@@ -225,6 +235,7 @@ Read [KERNEL.md](KERNEL.md), find a law you can violate, open an issue with the 
 | [formal/](formal/README.md) | the policy layer as a Tamarin theory: lemmas, the two attacks the welcome's bindings exclude, what is left out |
 | [OATH.md](OATH.md) | what the humans promise, signed with release keys |
 | [docs/MAINTAINERS.md](docs/MAINTAINERS.md) | hardware keys, builders, no agent holds a credential |
+| [docs/RELAY.md](docs/RELAY.md) | running a relay: one binary, a pinned address, queues of ciphertext and nothing else |
 | [docs/CLI.md](docs/CLI.md) · [docs/MCP.md](docs/MCP.md) · [docs/INTEGRATION.md](docs/INTEGRATION.md) | the three surfaces: the command line in the tree, the agent and embedding surfaces as specifications their code must meet |
 | [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | how to work here |
 

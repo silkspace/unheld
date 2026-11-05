@@ -258,6 +258,10 @@ criteria = "safe-to-deploy"
 version = "0.8.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.deranged]]
+version = "0.5.9"
+criteria = "safe-to-deploy"
+
 [[exemptions.digest]]
 version = "0.10.7"
 criteria = "safe-to-deploy"
@@ -356,6 +360,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.glob]]
 version = "0.3.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.graviola]]
+version = "0.4.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.group]]
@@ -598,6 +606,10 @@ criteria = "safe-to-deploy"
 version = "0.3.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.once_cell]]
+version = "1.12.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.once_cell_polyfill]]
 version = "1.70.2"
 criteria = "safe-to-deploy"
@@ -678,6 +690,10 @@ criteria = "safe-to-deploy"
 version = "0.6.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.powerfmt]]
+version = "0.2.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.ppv-lite86]]
 version = "0.2.21"
 criteria = "safe-to-deploy"
@@ -730,6 +746,10 @@ criteria = "safe-to-run"
 version = "1.12.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.rcgen]]
+version = "0.14.10"
+criteria = "safe-to-deploy"
+
 [[exemptions.redox_syscall]]
 version = "0.5.18"
 criteria = "safe-to-deploy"
@@ -750,6 +770,10 @@ criteria = "safe-to-deploy"
 version = "0.4.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.ring]]
+version = "0.17.11"
+criteria = "safe-to-deploy"
+
 [[exemptions.rpassword]]
 version = "7.5.4"
 criteria = "safe-to-deploy"
@@ -764,6 +788,22 @@ criteria = "safe-to-deploy"
 
 [[exemptions.rustix]]
 version = "1.1.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.rustls]]
+version = "0.23.37"
+criteria = "safe-to-deploy"
+
+[[exemptions.rustls-graviola]]
+version = "0.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.rustls-pki-types]]
+version = "1.15.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.rustls-webpki]]
+version = "0.103.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustversion]]
@@ -874,6 +914,10 @@ criteria = "safe-to-deploy"
 version = "2.0.21"
 criteria = "safe-to-deploy"
 
+[[exemptions.time]]
+version = "0.3.55"
+criteria = "safe-to-deploy"
+
 [[exemptions.tls_codec]]
 version = "0.5.0"
 criteria = "safe-to-deploy"
@@ -939,7 +983,47 @@ version = "0.2.130"
 criteria = "safe-to-deploy"
 
 [[exemptions.windows-sys]]
+version = "0.52.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows-sys]]
 version = "0.61.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows-targets]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows_aarch64_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows_aarch64_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows_i686_gnu]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows_i686_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows_i686_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows_x86_64_gnu]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows_x86_64_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.windows_x86_64_msvc]]
+version = "0.52.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.winnow]]
@@ -964,6 +1048,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.x25519-dalek]]
 version = "3.0.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.yasna]]
+version = "0.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy]]

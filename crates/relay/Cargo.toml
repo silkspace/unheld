@@ -1,0 +1,20 @@
+[package]
+name = "unheld-relay"
+description = "A store of queues that orders blobs and knows nothing else. Depends on unheld-blob and on nothing that can name a key."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+unheld-blob = { path = "../blob", version = "0.0.1" }
+thiserror.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+rustls-graviola = "0.4"
+rcgen = { version = "0.14", default-features = false }
+sha2 = "0.10"
+subtle = "2"
+rand.workspace = true
+graviola = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true

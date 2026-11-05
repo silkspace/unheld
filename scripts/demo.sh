@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Two vaults, one file carrier, nobody in between. Runs the whole proof of concept in one terminal.
+# Two vaults, a file carrier and a relay, nobody in between. Runs the whole proof of concept in one terminal.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release -q
@@ -55,3 +55,19 @@ $U --profile alice peers
 $U --profile bob   peers
 printf "there is no header. first 8 bytes are the salt: "; head -c 8 "$D/alice/vault" | xxd -p
 grep -c alice "$D/alice/vault" >/dev/null && echo "plaintext found in vault" || echo "no plaintext in vault"
+
+say "11. a relay: the one carrier that orders, and it holds ciphertext of a fixed size and nothing else"
+R=./target/release/unheld-relay
+RELAY_PORT="${UNHELD_RELAY_PORT:-14443}"
+ADDR=$($R --dir "$D/relay" init 127.0.0.1 --port "$RELAY_PORT")
+echo "relay address: $ADDR"
+$R --dir "$D/relay" serve --listen "127.0.0.1:$RELAY_PORT" 2>/dev/null &
+RELAY_PID=$!
+trap 'kill $RELAY_PID 2>/dev/null' EXIT
+sleep 0.5
+(cd "$D" && "$OLDPWD/$U" --profile alice relay new "$ADDR" queue.json)
+cp "$D/queue.json" "$D/queue-bob.json"
+echo "through a relay that cannot read this" | $U --profile alice send bob -c "relay:$D/queue.json" 2>/dev/null
+$U --profile bob open -c "relay:$D/queue-bob.json"
+echo "what the relay's disk holds:"
+ls -l "$D"/relay/queues/*/ | awk 'NR>1 {print "  " $5 " bytes  " $9}'

@@ -51,6 +51,10 @@ pub enum Refuse {
     NothingToOpen,
     #[error("carrier could not be read or written")]
     CarrierIo,
+    #[error("carrier skipped from {0} to {1}: a blob between them was not delivered")]
+    Gap(u64, u64),
+    #[error("carrier refused: {0}")]
+    CarrierRefused(&'static str),
     #[error("empty message")]
     EmptyMessage,
     #[error("duress passphrase must differ from the vault passphrase")]

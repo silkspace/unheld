@@ -22,6 +22,20 @@ fn carriers_cannot_depend_on_core() {
     }
 }
 
+/// L2 for the relay: the server and its carrier are in the adversary's position by design.
+#[test]
+fn relay_cannot_depend_on_core() {
+    let manifest = read("crates/relay/Cargo.toml");
+    assert!(!manifest.contains("unheld-core"), "relay crate depends on unheld-core");
+    assert!(!manifest.contains("openmls"), "relay crate depends on an MLS crate");
+    for rel in ["crates/relay/src/lib.rs", "crates/relay/src/store.rs", "crates/relay/src/server.rs", "crates/relay/src/carrier.rs"] {
+        let src = read(rel);
+        for word in ["Session", "SignatureKeyPair", "MlsGroup", "passphrase"] {
+            assert!(!src.contains(word), "{rel} mentions {word}");
+        }
+    }
+}
+
 /// L2 also for the blob crate: the adversary's objects know nothing but bytes.
 #[test]
 fn blob_crate_depends_on_nothing_secret() {
@@ -34,7 +48,7 @@ fn blob_crate_depends_on_nothing_secret() {
 /// Rule 6: no unsafe anywhere in the workspace.
 #[test]
 fn every_crate_forbids_unsafe() {
-    for rel in ["crates/blob/src/lib.rs", "crates/core/src/lib.rs", "crates/carriers/src/lib.rs", "crates/cli/src/main.rs"] {
+    for rel in ["crates/blob/src/lib.rs", "crates/core/src/lib.rs", "crates/carriers/src/lib.rs", "crates/cli/src/main.rs", "crates/relay/src/lib.rs", "crates/relay/src/main.rs"] {
         assert!(read(rel).starts_with("#![forbid(unsafe_code)]"), "{rel} does not forbid unsafe");
     }
 }

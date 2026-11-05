@@ -8,7 +8,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use unheld_blob::Carrier;
-use unheld_carriers::{ClipboardCarrier, FileCarrier, StdioCarrier};
+use unheld_carriers::{ClipboardCarrier, FileCarrier, RelayCarrier, StdioCarrier};
 use unheld_core::config;
 use unheld_core::vocab::Refuse;
 use unheld_core::{Attach, Core, Enrolment, Intro, Outbound, Request, Share};
@@ -50,13 +50,13 @@ enum Cmd {
     /// Encrypt a message (from stdin) to a verified peer and hand the blob to a carrier.
     Send {
         name: String,
-        /// Carrier: `stdout`, `clipboard` or `file:<path>`.
+        /// Carrier: `stdout`, `clipboard`, `file:<path>` or `relay:<queue file>`.
         #[arg(short, long, default_value = "stdout")]
         carrier: String,
     },
     /// Take a blob from a carrier and decrypt it.
     Open {
-        /// Carrier: `stdin`, `clipboard` or `file:<path>`.
+        /// Carrier: `stdin`, `clipboard`, `file:<path>` or `relay:<queue file>`.
         #[arg(short, long, default_value = "stdin")]
         carrier: String,
     },
@@ -89,6 +89,18 @@ enum Cmd {
     },
     /// This build and what is known about it.
     About,
+    /// Queues on a relay: the one carrier that orders, for groups above the small bound.
+    Relay {
+        #[command(subcommand)]
+        cmd: RelayCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum RelayCmd {
+    /// Make a queue on the relay at `address` (as `unheld-relay init` printed it) and write its file.
+    /// Hand the file to everyone in the conversation; each passes `-c relay:<file>`.
+    New { address: String, file: String },
 }
 
 #[derive(Subcommand)]
@@ -110,7 +122,7 @@ enum GroupCmd {
         name: String,
         #[arg(required = true, num_args = 2..)]
         peers: Vec<String>,
-        /// Carrier for the welcome: `stdout`, `clipboard` or `file:<path>`.
+        /// Carrier for the welcome: `stdout`, `clipboard`, `file:<path>` or `relay:<queue file>`.
         #[arg(short, long, default_value = "stdout")]
         carrier: String,
     },
@@ -170,7 +182,7 @@ enum DeviceCmd {
     /// On the witness: read what the new device handed back and write one blob per session, and one for the device.
     Connect {
         attach: String,
-        /// Where the blobs go: `dir:<path>` writes one file per reader, `stdout` prints them in turn.
+        /// Where the blobs go: `dir:<path>` writes one file per reader, `relay:<queue file>` puts them all on one queue, `stdout` prints them in turn.
         #[arg(short, long, default_value = "stdout")]
         carrier: String,
     },
@@ -306,6 +318,7 @@ fn read_stdin() -> Result<Vec<u8>, Refuse> {
 fn carrier(spec: &str) -> Result<Box<dyn Carrier>, Refuse> {
     match spec.split_once(':') {
         Some(("file", path)) => Ok(Box::new(FileCarrier::new(path))),
+        Some(("relay", path)) => Ok(Box::new(RelayCarrier::open(Path::new(path)).map_err(|_| Refuse::CarrierIo)?)),
         None if spec == "stdout" || spec == "stdin" => Ok(Box::new(StdioCarrier)),
         None if spec == "clipboard" => Ok(Box::new(ClipboardCarrier)),
         _ => Err(Refuse::CarrierIo),
@@ -418,11 +431,7 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             }
         }
         Cmd::Open { carrier: spec } => {
-            let blob = carrier(&spec)?.get().map_err(|e| match e {
-                unheld_blob::CarrierError::Empty => Refuse::NothingToOpen,
-                unheld_blob::CarrierError::Io(_) => Refuse::CarrierIo,
-                unheld_blob::CarrierError::Blob(_) => Refuse::BadBlob,
-            })?;
+            let blob = carrier(&spec)?.get().map_err(carrier_refusal)?;
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
             for m in core.open(&blob)? {
                 if let Some(change) = &m.change {
@@ -500,11 +509,7 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             println!("{} vault destroyed", style::ok("✓"));
         }
         Cmd::Inspect { carrier: spec } => {
-            let blob = carrier(&spec)?.get().map_err(|e| match e {
-                unheld_blob::CarrierError::Empty => Refuse::NothingToOpen,
-                unheld_blob::CarrierError::Io(_) => Refuse::CarrierIo,
-                unheld_blob::CarrierError::Blob(_) => Refuse::BadBlob,
-            })?;
+            let blob = carrier(&spec)?.get().map_err(carrier_refusal)?;
             let outside = unheld_core::inspect(&blob);
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&outside).map_err(|_| Refuse::Protocol)?);
@@ -524,6 +529,11 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                 }
                 println!("{}", style::dim("and never: who sent it, to whom, or what it says (docs/decisions/002-carrier-view.md)"));
             }
+        }
+        Cmd::Relay { cmd: RelayCmd::New { address, file } } => {
+            let carrier = RelayCarrier::create(&address, Path::new(&file)).map_err(|_| Refuse::CarrierIo)?;
+            println!("{} {}  {}", style::ok("✓"), style::head("queue created"), style::hash(&carrier.queue().address()));
+            println!("{}", style::dim(&format!("hand {file} to everyone in the conversation; each passes -c relay:{file}")));
         }
         Cmd::About => {
             println!("{} {}  {}", style::head("unheld"), env!("CARGO_PKG_VERSION"), style::dim("proof of concept; unsigned, unlogged, unaudited"));
@@ -545,6 +555,17 @@ fn read_text(source: &str) -> Result<String, Refuse> {
 
 /// Several blobs for several readers: `dir:<path>` writes `<reader>.blob` in that directory,
 /// `stdout` prints each after a line naming its reader on stderr.
+/// What the carrier's failure is, in the client's words.
+fn carrier_refusal(e: unheld_blob::CarrierError) -> Refuse {
+    match e {
+        unheld_blob::CarrierError::Empty => Refuse::NothingToOpen,
+        unheld_blob::CarrierError::Io(_) => Refuse::CarrierIo,
+        unheld_blob::CarrierError::Blob(_) => Refuse::BadBlob,
+        unheld_blob::CarrierError::Disordered { expected, got } => Refuse::Gap(expected, got),
+        unheld_blob::CarrierError::Refused(why) => Refuse::CarrierRefused(why),
+    }
+}
+
 fn put_many(spec: &str, outs: &[Outbound]) -> Result<(), Refuse> {
     match spec.split_once(':') {
         Some(("dir", path)) => {
@@ -560,6 +581,15 @@ fn put_many(spec: &str, outs: &[Outbound]) -> Result<(), Refuse> {
             for o in outs {
                 eprintln!("{}", style::dim(&format!("· for {}:", o.to.label())));
                 StdioCarrier.put(&o.blob).map_err(|_| Refuse::CarrierIo)?;
+            }
+            Ok(())
+        }
+        Some(("relay", path)) => {
+            // One queue, every reader: each collects all of them and opens the one that is theirs.
+            let mut queue = RelayCarrier::open(Path::new(path)).map_err(|_| Refuse::CarrierIo)?;
+            for o in outs {
+                queue.put(&o.blob).map_err(carrier_refusal)?;
+                eprintln!("{} {}", style::ok("✓"), style::dim(&format!("for {}: {} bytes to the relay", o.to.label(), o.blob.len())));
             }
             Ok(())
         }

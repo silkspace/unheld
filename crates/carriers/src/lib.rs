@@ -1,9 +1,13 @@
 #![forbid(unsafe_code)]
-//! Carriers move blobs. This crate depends on `unheld-blob` and on nothing that can name a key.
+//! Carriers move blobs. This crate depends on `unheld-blob`, on `unheld-relay` for the one
+//! ordered carrier, and on nothing that can name a key.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use unheld_blob::{Blob, Carrier, CarrierError};
+
+/// The ordered carrier: a queue on a relay, over TLS pinned to the relay's certificate (L19).
+pub use unheld_relay::carrier::RelayCarrier;
 
 /// A file holding one blob as text. Put overwrites, get reads.
 pub struct FileCarrier {
