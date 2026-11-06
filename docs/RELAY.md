@@ -11,13 +11,15 @@ unheld-relay --dir /var/lib/unheld-relay serve --listen 0.0.0.0:4443
 
 ## What a client does with it
 
-`unheld relay new <address> <file>` makes a queue on the relay, with a random identifier and two random capabilities, one to append and one to read, and writes all of it to `<file>`. The relay holds hashes of the capabilities and never sees the preimages at rest. The person who made the queue hands the file to everyone in the conversation, the way a group's welcome is handed over, and each of them passes `-c relay:<file>` to `send`, `open`, `group new`, `group send`, `devices connect` and the rest. The file also holds the reader's cursor, so every copy is a separate reader of the same queue.
+A conversation's queues are held in a link file, and the two people in one each make the queue they will read (`docs/decisions/008-queue-per-direction.md`). `unheld relay new <address> <file>` makes a queue on the relay at `address`, with a random identifier and two random capabilities, keeps the one to read in `<file>`, and prints the one to write as an invitation, `unheld-relay://host:port/<queue>/<capability>#<pin>`. The relay holds hashes of the capabilities and never sees the preimages at rest. Each person hands their invitation to the other by any channel, the way an introduction travels, and runs `unheld relay join <file> <invitation>` with the one they received; from then on `-c relay:<file>` sends on the other person's queue and reads from their own, on relays each of them chose, and nothing either sends is handed back to them. The file also holds the reader's cursor.
+
+A group uses one queue, because its commits need one order: whoever starts it runs `relay new`, does not join anyone, and hands the file itself to every member, each of whom passes `-c relay:<file>` to `group send`, `open`, `devices connect` and the rest. Every copy is a separate reader of the same queue, and a member's own blobs are skipped by number rather than fetched and refused.
 
 A queue is the one carrier that orders, so a group above `config::group::SMALL` members forms over it and over nothing else (L19).
 
 ## What the relay sees and cannot do
 
-It sees bucket sizes, times, the network addresses of those who connect, how many readers collect from one queue, and that every blob in one queue is one conversation. It cannot read a blob, forge one that opens, produce a roster change, or tell one person's queue from another's. A relay that drops a blob is caught by the reader's cursor, since numbers are dense, and a relay that serves two readers different orders forks their group into a refusal that is seen and not repaired.
+It sees bucket sizes, times, the network addresses of those who connect, how many readers collect from one queue, and that every blob in one queue is one direction of one conversation. It cannot read a blob, forge one that opens, produce a roster change, or tell one person's queue from another's. A relay that drops a blob is caught by the reader's cursor, since numbers are dense, and a relay that serves two readers different orders forks their group into a refusal that is seen and not repaired.
 
 ## Limits
 

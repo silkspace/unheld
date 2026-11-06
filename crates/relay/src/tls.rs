@@ -13,7 +13,7 @@ use std::sync::Arc;
 use subtle::ConstantTimeEq as _;
 
 /// The hash of the relay's certificate, which is the whole of what a client trusts.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Pin(pub [u8; HASH_LEN]);
 
 impl Pin {

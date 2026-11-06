@@ -55,13 +55,13 @@ enum Cmd {
     /// Encrypt a message (from stdin) to a verified peer and hand the blob to a carrier.
     Send {
         name: String,
-        /// Carrier: `stdout`, `clipboard`, `file:<path>` or `relay:<queue file>`.
+        /// Carrier: `stdout`, `clipboard`, `file:<path>` or `relay:<link file>`.
         #[arg(short, long, default_value = "stdout")]
         carrier: String,
     },
     /// Take a blob from a carrier and decrypt it.
     Open {
-        /// Carrier: `stdin`, `clipboard`, `file:<path>` or `relay:<queue file>`.
+        /// Carrier: `stdin`, `clipboard`, `file:<path>` or `relay:<link file>`.
         #[arg(short, long, default_value = "stdin")]
         carrier: String,
     },
@@ -96,11 +96,11 @@ enum Cmd {
     About,
     /// Serve the client to an assistant over stdio as a Model Context Protocol server (docs/MCP.md).
     Mcp {
-        /// Carrier the agent reads and sends through: `file:<path>`, `clipboard` or `relay:<queue file>`.
+        /// Carrier the agent reads and sends through: `file:<path>`, `clipboard` or `relay:<link file>`.
         #[arg(short, long)]
         carrier: String,
     },
-    /// Queues on a relay: the one carrier that orders, for groups above the small bound.
+    /// Queues on a relay: the one carrier that orders. One queue per direction between two people, one shared queue for a group.
     Relay {
         #[command(subcommand)]
         cmd: RelayCmd,
@@ -117,9 +117,11 @@ enum PeersCmd {
 
 #[derive(Subcommand)]
 enum RelayCmd {
-    /// Make a queue on the relay at `address` (as `unheld-relay init` printed it) and write its file.
-    /// Hand the file to everyone in the conversation; each passes `-c relay:<file>`.
+    /// Make your queue on the relay at `address` (as `unheld-relay init` printed it), write its file,
+    /// and print the invitation the other person joins. For a group, hand the file itself to every member.
     New { address: String, file: String },
+    /// Point `file` at the other person's queue with the invitation they handed you; after both have joined, each reads only what the other wrote.
+    Join { file: String, invitation: String },
 }
 
 #[derive(Subcommand)]
@@ -141,7 +143,7 @@ enum GroupCmd {
         name: String,
         #[arg(required = true, num_args = 2..)]
         peers: Vec<String>,
-        /// Carrier for the welcome: `stdout`, `clipboard`, `file:<path>` or `relay:<queue file>`.
+        /// Carrier for the welcome: `stdout`, `clipboard`, `file:<path>` or `relay:<link file>`.
         #[arg(short, long, default_value = "stdout")]
         carrier: String,
     },
@@ -201,7 +203,7 @@ enum DeviceCmd {
     /// On the witness: read what the new device handed back and write one blob per session, and one for the device.
     Connect {
         attach: String,
-        /// Where the blobs go: `dir:<path>` writes one file per reader, `relay:<queue file>` puts them all on one queue, `stdout` prints them in turn.
+        /// Where the blobs go: `dir:<path>` writes one file per reader, `relay:<link file>` puts them all on one queue, `stdout` prints them in turn.
         #[arg(short, long, default_value = "stdout")]
         carrier: String,
     },
@@ -577,8 +579,20 @@ fn run(cli: Cli) -> Result<(), Refuse> {
         }
         Cmd::Relay { cmd: RelayCmd::New { address, file } } => {
             let carrier = RelayCarrier::create(&address, Path::new(&file)).map_err(|_| Refuse::CarrierIo)?;
-            println!("{} {}  {}", style::ok("✓"), style::head("queue created"), style::hash(&carrier.queue().address()));
-            println!("{}", style::dim(&format!("hand {file} to everyone in the conversation; each passes -c relay:{file}")));
+            let link = carrier.link();
+            let at = link.receive.as_ref().ok_or(Refuse::CarrierIo)?;
+            eprintln!("{} {}  {}", style::ok("✓"), style::head("your queue is on"), style::hash(&at.at.relay));
+            eprintln!("{}", style::dim("hand the line below to the one person who will send to you, by any channel, and run `unheld relay join` with theirs:"));
+            println!("{}", link.invitation().ok_or(Refuse::CarrierIo)?);
+            eprintln!("{}", style::dim(&format!("for a group, hand {file} itself to every member instead; each passes -c relay:{file}")));
+        }
+        Cmd::Relay { cmd: RelayCmd::Join { file, invitation } } => {
+            let link = RelayCarrier::join(Path::new(&file), &invitation).map_err(|_| Refuse::CarrierIo)?;
+            let to = link.send.as_ref().ok_or(Refuse::CarrierIo)?;
+            match &link.receive {
+                Some(from) => println!("{} {}  {}  {}", style::ok("✓"), style::head(&format!("{file} sends to")), style::hash(&to.at.relay), style::dim(&format!("and receives on {}", from.at.relay))),
+                None => println!("{} {}  {}  {}", style::ok("✓"), style::head(&format!("{file} sends to")), style::hash(&to.at.relay), style::dim("and receives nowhere until `unheld relay new` makes your own queue")),
+            }
         }
         Cmd::About => {
             println!("{} {}  {}", style::head("unheld"), env!("CARGO_PKG_VERSION"), style::dim("proof of concept; unsigned, unlogged, unaudited"));
@@ -635,7 +649,7 @@ fn put_many(spec: &str, outs: &[Outbound]) -> Result<(), Refuse> {
             Ok(())
         }
         Some(("relay", path)) => {
-            // One queue, every reader: each collects all of them and opens the one that is theirs.
+            // One link, every reader: each collects all of them and opens the one that is theirs.
             let mut queue = RelayCarrier::open(Path::new(path)).map_err(|_| Refuse::CarrierIo)?;
             for o in outs {
                 queue.put(&o.blob).map_err(carrier_refusal)?;

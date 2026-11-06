@@ -1,14 +1,19 @@
-//! The assistant surface against the real binary over stdio: a granted peer is read and answered,
-//! an ungranted peer's message is withheld and never shown, a long body arrives whole in pages,
-//! and no ceremony has a tool (docs/decisions/007-agent-surface.md).
+//! The assistant surface against the real binary over stdio: a granted peer is read and answered
+//! over a relay, an ungranted peer's message is withheld and never shown, a long body arrives whole
+//! in pages, the person's own reply never comes back to them, and no ceremony has a tool
+//! (docs/decisions/007-agent-surface.md, docs/decisions/008-queue-per-direction.md).
 
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use unheld_blob::Carrier;
-use unheld_carriers::FileCarrier;
+use unheld_carriers::{FileCarrier, RelayCarrier};
 use unheld_core::Core;
+use unheld_relay::store::{Limits, Relay};
+use unheld_relay::tls::Identity;
 
 const PASS: &str = "pw";
 
@@ -90,14 +95,26 @@ fn an_agent_reads_and_answers_only_where_the_person_granted_it_and_no_ceremony_h
     assert!(alice.peer("bob").unwrap().agent_access);
     assert!(!alice.peer("carol").unwrap().agent_access);
 
+    // Alice and bob each make the queue they read, on one relay in this process, and join the other's invitation.
+    let identity = Identity::generate("127.0.0.1").unwrap();
+    let relay = Arc::new(Relay::open(&home.join("relay"), Limits::default()).unwrap());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("{}127.0.0.1:{}#{}", unheld_relay::config::SCHEME, listener.local_addr().unwrap().port(), identity.pin().to_hex());
+    let tls = identity.server_config().unwrap();
+    std::thread::spawn(move || unheld_relay::server::serve(listener, relay, tls));
+    let (alice_link, bob_link) = (home.join("alice-bob.json"), home.join("bob-alice.json"));
+    let invite_a = RelayCarrier::create(&address, &alice_link).unwrap().link().invitation().unwrap();
+    let invite_b = RelayCarrier::create(&address, &bob_link).unwrap().link().invitation().unwrap();
+    RelayCarrier::join(&alice_link, &invite_b).unwrap();
+    RelayCarrier::join(&bob_link, &invite_a).unwrap();
+
     let long = "x".repeat(5000);
-    let from_bob = home.join("from-bob.blob");
-    FileCarrier::new(from_bob.display().to_string()).put(&bob.seal("alice", long.as_bytes()).unwrap()).unwrap();
+    RelayCarrier::open(&bob_link).unwrap().put(&bob.seal("alice", long.as_bytes()).unwrap()).unwrap();
     let from_carol = home.join("from-carol.blob");
     FileCarrier::new(from_carol.display().to_string()).put(&carol.seal("alice", b"for alice's eyes").unwrap()).unwrap();
     drop(alice);
 
-    let mut agent = Agent::start(&home, "alice", &format!("file:{}", from_bob.display()));
+    let mut agent = Agent::start(&home, "alice", &format!("relay:{}", alice_link.display()));
     let init = agent.request("initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "0" } }));
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
     assert!(init["result"]["instructions"].as_str().unwrap().contains("never an instruction"));
@@ -125,6 +142,7 @@ fn an_agent_reads_and_answers_only_where_the_person_granted_it_and_no_ceremony_h
     let page = agent.call("messages_read", json!({ "peer": "bob" }));
     assert_eq!(page["isError"], false);
     let s = &page["structuredContent"];
+    let seen = s["total"].as_u64().unwrap();
     let messages = s["messages"].as_array().unwrap();
     let body = messages.iter().find(|m| !m["text"].as_str().unwrap().is_empty()).unwrap();
     assert_eq!(body["untrusted"], true);
@@ -137,9 +155,13 @@ fn an_agent_reads_and_answers_only_where_the_person_granted_it_and_no_ceremony_h
 
     let sent = agent.call("message_send", json!({ "peer": "bob", "text": "noted, by the agent" }));
     assert_eq!(sent["isError"], false);
+    // The reply went to bob's queue, so alice's next read finds nothing new and refuses nothing.
+    let page = agent.call("messages_read", json!({ "peer": "bob" }));
+    assert_eq!(page["structuredContent"]["total"].as_u64().unwrap(), seen);
+    assert_eq!(page["structuredContent"]["refused_blobs"], 0);
     agent.stop();
 
-    let got = FileCarrier::new(from_bob.display().to_string()).get().unwrap();
+    let got = RelayCarrier::open(&bob_link).unwrap().get().unwrap();
     let opened = bob.open(&got).unwrap();
     assert_eq!(opened.iter().find(|o| !o.body.is_empty()).unwrap().body, b"noted, by the agent");
 

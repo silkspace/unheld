@@ -1,12 +1,13 @@
 //! L19 over the first ordered carrier: a group above the small bound forms over the relay, and a
 //! relay that orders differently for different readers forks the group into a refusal that is
-//! seen and not repaired (docs/decisions/006-relay.md).
+//! seen and not repaired (docs/decisions/006-relay.md). Two people hold one queue per direction
+//! and nothing either sends comes back to them (docs/decisions/008-queue-per-direction.md).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use unheld_blob::Carrier;
 use unheld_core::{config, vocab::Refuse, Core};
-use unheld_relay::carrier::{Adversary, LocalTransport, Queue, RelayCarrier};
+use unheld_relay::carrier::{Adversary, Link, LocalTransport, RelayCarrier};
 use unheld_relay::store::{Limits, Relay};
 use unheld_relay::tls::Pin;
 
@@ -36,9 +37,9 @@ fn a_group_above_the_bound_forms_over_the_relay_and_an_equivocating_relay_forks_
 
     let relay = Arc::new(Relay::open(&tmp("store"), Limits::default()).unwrap());
     let mut admin = RelayCarrier::create_on(LocalTransport::new(Arc::clone(&relay)), "local", Pin([0; 32])).unwrap();
-    let queue = admin.queue().clone();
+    let link = admin.link().clone();
     let reader = |after: u64, adversary: Adversary| {
-        RelayCarrier::new(Queue { after, ..queue.clone() }, LocalTransport::hostile(Arc::clone(&relay), adversary), None)
+        RelayCarrier::new(Link { after, ..link.clone() }, LocalTransport::hostile(Arc::clone(&relay), adversary), None)
     };
 
     // One above the bound is refused over a carrier that does not order, and passes over one that does.
@@ -84,4 +85,50 @@ fn a_group_above_the_bound_forms_over_the_relay_and_an_equivocating_relay_forks_
     let q = readers.last_mut().unwrap();
     assert!(removed.open(&q.get().unwrap()).unwrap()[0].change.as_deref().unwrap().contains("removed"));
     assert!(removed.open(&q.get().unwrap()).is_err());
+}
+
+#[test]
+fn two_people_hold_one_queue_per_direction_and_neither_is_handed_back_what_they_sent() {
+    let mut alice = Core::create(&tmp("pair-alice"), "pw", "alice").unwrap();
+    let mut bob = Core::create(&tmp("pair-bob"), "pw", "bob").unwrap();
+    pair(&mut alice, "alice", &mut bob, "bob");
+
+    // Each makes the queue they will read, on the relay they chose, and joins the other's invitation.
+    let relay_a = Arc::new(Relay::open(&tmp("pair-relay-a"), Limits::default()).unwrap());
+    let relay_b = Arc::new(Relay::open(&tmp("pair-relay-b"), Limits::default()).unwrap());
+    let mut link_a = RelayCarrier::create_on(LocalTransport::new(Arc::clone(&relay_a)), "a.example:4443", Pin([1; 32])).unwrap().link().clone();
+    let mut link_b = RelayCarrier::create_on(LocalTransport::new(Arc::clone(&relay_b)), "b.example:4443", Pin([2; 32])).unwrap().link().clone();
+    let (invite_a, invite_b) = (link_a.invitation().unwrap(), link_b.invitation().unwrap());
+    link_a.join(&invite_b).unwrap();
+    link_b.join(&invite_a).unwrap();
+    assert!(!link_a.shared() && !link_b.shared());
+
+    // In process the transport reaches one store, so each side's carrier is built over the relay its send half names
+    // for puts and the relay its receive half names for gets, which here are two stores behind one `Transport`.
+    struct TwoRelays(Arc<Relay>, Arc<Relay>);
+    impl unheld_relay::carrier::Transport for TwoRelays {
+        fn call(&mut self, at: &unheld_relay::carrier::Endpoint, request: &unheld_relay::wire::Request) -> Result<unheld_relay::wire::Response, unheld_relay::RelayError> {
+            if at.relay.starts_with("a.") { self.0.handle(request.clone()) } else { self.1.handle(request.clone()) }
+        }
+    }
+    let mut a = RelayCarrier::new(link_a, TwoRelays(Arc::clone(&relay_a), Arc::clone(&relay_b)), None);
+    let mut b = RelayCarrier::new(link_b, TwoRelays(Arc::clone(&relay_a), Arc::clone(&relay_b)), None);
+
+    a.put(&alice.seal("bob", b"to bob, on bob's relay").unwrap()).unwrap();
+    assert!(matches!(a.get(), Err(unheld_blob::CarrierError::Empty)), "alice's own blob never returns to her");
+    let opened = bob.open(&b.get().unwrap()).unwrap();
+    assert_eq!(opened.iter().find(|o| !o.body.is_empty()).unwrap().body, b"to bob, on bob's relay");
+    b.put(&bob.seal("alice", b"to alice, on alice's relay").unwrap()).unwrap();
+    assert!(matches!(b.get(), Err(unheld_blob::CarrierError::Empty)));
+    assert_eq!(alice.open(&a.get().unwrap()).unwrap()[0].body, b"to alice, on alice's relay");
+    assert!(matches!(a.get(), Err(unheld_blob::CarrierError::Empty)));
+
+    // Each relay holds exactly one queue with the blobs one person wrote, and nothing of the other direction.
+    let store_a = std::fs::read_dir(tmp_existing("pair-relay-a").join("queues")).unwrap().count();
+    let store_b = std::fs::read_dir(tmp_existing("pair-relay-b").join("queues")).unwrap().count();
+    assert_eq!((store_a, store_b), (1, 1));
+}
+
+fn tmp_existing(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("unheld-relay-test-{name}-{}", std::process::id()))
 }

@@ -1,6 +1,6 @@
 # 006: the relay is a queue that orders blobs and knows nothing else
 
-**Status.** Accepted; in the tree as `crates/relay`, `RelayCarrier` and `unheld relay new`. Written before the code (TRACE.md, R1), then amended for three things the code decided: the wire format, the storage layout and what an idle queue is.
+**Status.** Accepted; in the tree as `crates/relay`, `RelayCarrier` and `unheld relay new`. Written before the code (TRACE.md, R1), then amended for three things the code decided: the wire format, the storage layout and what an idle queue is. How a conversation's queues are shaped, one per direction between two people and one for a group, is `008-queue-per-direction.md`.
 
 **Laws touched.** L19 (ordered or small) gains its first ordered carrier; L2 (zero custody), L7 (unlinkability), L12 (detectable omission), L13 (bounded state) and L22 (no creator input) constrain its shape. Reopens `002-carrier-view.md` as that note said it would.
 

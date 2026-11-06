@@ -8,13 +8,13 @@
 
 ```bash
 unheld peers grant-agent bob                  # the person's decision, per peer, at the command line
-unheld --profile alice mcp -c relay:queue.json
+unheld --profile alice mcp -c relay:bob.json   # the link file both people joined (docs/RELAY.md)
 ```
 
 The host that starts the server passes the vault passphrase in `UNHELD_PASSPHRASE`, or leaves the server a controlling terminal to ask on; the protocol stream is never used for it. The server unlocks the vault once and holds it for the connection, and nothing else opens that vault while it runs, because two processes on one vault would each save over the other's ratchet state. A host's configuration for this server, in the JSON form most hosts read:
 
 ```json
-{ "mcpServers": { "unheld": { "command": "unheld", "args": ["--profile", "alice", "mcp", "-c", "relay:queue.json"], "env": { "UNHELD_PASSPHRASE": "..." } } } }
+{ "mcpServers": { "unheld": { "command": "unheld", "args": ["--profile", "alice", "mcp", "-c", "relay:bob.json"], "env": { "UNHELD_PASSPHRASE": "..." } } } }
 ```
 
 A passphrase in a host's configuration file is a secret at rest on that machine, under whatever that file's permissions are; a host that can hand the server a terminal needs no such line.
@@ -39,7 +39,7 @@ There is no `verify`, `enroll`, `rotate`, `split`, `recover`, `wipe`, `grant`, `
 
 ## Plaintext policy
 
-A model sees a conversation only after the human runs `unheld peers grant-agent <peer>`, per peer, and the grant appears in `peers_list`. The sender of a blob is inside the encryption, so the server opens what the carrier delivers before it can know who wrote it, and a part from a peer without a grant is counted as `withheld` and its text dropped, in memory and nowhere else; the server stores no history, so that message is not shown later to anyone. Give an agent a carrier that carries only the conversations it is granted, which a relay queue is by construction and a file is in practice, and do not point it at a clipboard shared with other conversations.
+A model sees a conversation only after the human runs `unheld peers grant-agent <peer>`, per peer, and the grant appears in `peers_list`. The sender of a blob is inside the encryption, so the server opens what the carrier delivers before it can know who wrote it, and a part from a peer without a grant is counted as `withheld` and its text dropped, in memory and nowhere else; the server stores no history, so that message is not shown later to anyone. Give an agent a carrier that carries only the conversations it is granted, which a relay link is by construction, since it reads one queue that one person writes, and a file is in practice, and do not point it at a clipboard shared with other conversations.
 
 Received text is returned as data with `untrusted: true`, inside a JSON string in a typed result rather than as prose, the server never interprets it, and nothing in the protocol lets a message carry an instruction the server acts on. The server's `instructions` at `initialize` say the same to the model. Message bodies are paged, never cut, and a body larger than a page is returned as a head with a `ref` and a `next_start`.
 

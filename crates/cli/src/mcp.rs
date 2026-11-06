@@ -266,7 +266,7 @@ impl Server {
                     { "spec": "stdout | stdin", "ordered": false },
                     { "spec": "clipboard", "ordered": false },
                     { "spec": "file:<path>", "ordered": false },
-                    { "spec": "relay:<queue file>", "ordered": true },
+                    { "spec": "relay:<link file>", "ordered": true },
                 ],
                 "small_group": core_config::group::SMALL,
             }))

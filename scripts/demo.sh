@@ -65,26 +65,32 @@ $R --dir "$D/relay" serve --listen "127.0.0.1:$RELAY_PORT" 2>/dev/null &
 RELAY_PID=$!
 trap 'kill $RELAY_PID 2>/dev/null' EXIT
 sleep 0.5
-(cd "$D" && "$OLDPWD/$U" --profile alice relay new "$ADDR" queue.json)
-cp "$D/queue.json" "$D/queue-bob.json"
-echo "through a relay that cannot read this" | $U --profile alice send bob -c "relay:$D/queue.json" 2>/dev/null
-$U --profile bob open -c "relay:$D/queue-bob.json"
-echo "what the relay's disk holds:"
-ls -l "$D"/relay/queues/*/ | awk 'NR>1 {print "  " $5 " bytes  " $9}'
+echo "each makes the queue they will read and hands the other the right to write to it:"
+INVITE_A=$(cd "$D" && "$OLDPWD/$U" --profile alice relay new "$ADDR" alice-bob.json)
+INVITE_B=$(cd "$D" && "$OLDPWD/$U" --profile bob   relay new "$ADDR" bob-alice.json 2>/dev/null)
+echo "alice's invitation: $INVITE_A"
+(cd "$D" && "$OLDPWD/$U" --profile alice relay join alice-bob.json "$INVITE_B")
+(cd "$D" && "$OLDPWD/$U" --profile bob   relay join bob-alice.json "$INVITE_A")
+echo "through a relay that cannot read this" | $U --profile alice send bob -c "relay:$D/alice-bob.json" 2>/dev/null
+$U --profile bob open -c "relay:$D/bob-alice.json"
+echo "and back the other way" | $U --profile bob send alice -c "relay:$D/bob-alice.json" 2>/dev/null
+$U --profile alice open -c "relay:$D/alice-bob.json"
+echo "what the relay's disk holds, one queue per direction:"
+ls -l "$D"/relay/queues/*/ | awk 'NF>=9 {print "  " $5 " bytes  " $9}'
 
-say "12. an assistant reads and answers for alice, for the one peer she granted, through the same binary"
+say "12. an assistant reads and answers for alice, for the one peer she granted, through the same binary and the same relay"
 $U --profile alice peers grant-agent bob
-echo "is your assistant reading this?" | $U --profile bob send alice -c "file:$D/agent.blob" 2>/dev/null
+echo "is your assistant reading this?" | $U --profile bob send alice -c "relay:$D/bob-alice.json" 2>/dev/null
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"messages_read","arguments":{"peer":"bob"}}}' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"message_send","arguments":{"peer":"bob","text":"yes, and it holds no key"}}}' \
   '{"jsonrpc":"2.0","id":4,"method":"tools/list"}' \
-  | $U --profile alice mcp -c "file:$D/agent.blob" | python3 -c '
+  | $U --profile alice mcp -c "relay:$D/alice-bob.json" | python3 -c '
 import json, sys
 for line in sys.stdin:
     r = json.loads(line)["result"]
     if "tools" in r: print("  tools:", " ".join(t["name"] for t in r["tools"]), "(no verify, no enroll, no wipe)")
     elif "structuredContent" in r: print("  agent sees:", json.dumps(r["structuredContent"]))
 '
-$U --profile bob open -c "file:$D/agent.blob"
+$U --profile bob open -c "relay:$D/bob-alice.json"

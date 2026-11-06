@@ -78,7 +78,7 @@ g-bd68bc2320 epoch 1  admin me
 [g-bd68bc2320] me › hello both
 ```
 
-`you` never met `them`, and the client says so every time, including before every `group send`. `group add team more -c file:/tmp/c -w file:/tmp/wm` writes a commit for the members and a welcome for the newcomer; `group remove team them -c file:/tmp/r` writes a commit everyone opens as a line saying who removed whom, after which `them` opens nothing further. Only the one who started the group changes its roster, and every other client refuses a roster change from anyone else before merging it. Above eight people the file, clipboard and pipe carriers are refused, because they cannot order commits, which is the whole reason large groups usually need a server; `-c relay:<file>` is the carrier that orders, a queue on a relay that holds ciphertext of a fixed size and nothing else, and `unheld relay new` makes one (docs/RELAY.md).
+`you` never met `them`, and the client says so every time, including before every `group send`. `group add team more -c file:/tmp/c -w file:/tmp/wm` writes a commit for the members and a welcome for the newcomer; `group remove team them -c file:/tmp/r` writes a commit everyone opens as a line saying who removed whom, after which `them` opens nothing further. Only the one who started the group changes its roster, and every other client refuses a roster change from anyone else before merging it. Above eight people the file, clipboard and pipe carriers are refused, because they cannot order commits, which is the whole reason large groups usually need a server; `-c relay:<file>` is the carrier that orders, queues on relays that hold ciphertext of a fixed size and nothing else, with one queue per direction between two people, each on the relay its reader chose, and one shared queue for a group; `unheld relay new` makes one and `unheld relay join` takes the other side's (docs/RELAY.md).
 
 A second device is a second profile here. On it, `devices request` makes a vault and prints a request and sixty digits; on the first, `devices enroll phone <request>` prints the digits the request's key makes and asks whether the new device shows exactly them:
 
@@ -142,7 +142,7 @@ Two bindings in the welcome carry the weight: the recipient's identity key named
 Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe, the clipboard or a relay queue with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. The same core is a Python module with every verb, so a program in Python moves the bytes and holds no key. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
-cargo test --workspace            # 41 tests: laws L1, L3, L4, L8, L10 to L19, L21, the agent surface and the crate graph
+cargo test --workspace            # 43 tests: laws L1, L3, L4, L8, L10 to L19, L21, the agent surface and the crate graph
 cd crates/py && uv sync && uv run pytest -q   # the same laws from Python, a list as the carrier
 ./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
 ./scripts/fuzz.sh 60              # seven fuzz targets, one per parser that reads bytes from outside, 60 s each
@@ -202,16 +202,25 @@ there is no header. first 8 bytes are the salt: 8ccfc8993f3fece6
 no plaintext in vault
 
 11. a relay: the one carrier that orders, and it holds ciphertext of a fixed size and nothing else
-relay address: unheld-relay://127.0.0.1:14443#093e0438c00155d0d1ed36f43b9f640cdf660cdee87cb0676d38981f7f5fcf1b
-✓ queue created  unheld-relay://127.0.0.1:14443/d12af39d75fc9594f3f359de9d5d858b6446d76438362019e4a7a0b79f16e047#093e0438c00155d0d1ed36f43b9f640cdf660cdee87cb0676d38981f7f5fcf1b
-hand queue.json to everyone in the conversation; each passes -c relay:queue.json
+relay address: unheld-relay://127.0.0.1:14448#f7b8552b24f033c0b08d34828105c84187bd7f4b03eb8ba5699959231b413703
+each makes the queue they will read and hands the other the right to write to it:
+✓ your queue is on  127.0.0.1:14448
+hand the line below to the one person who will send to you, by any channel, and run `unheld relay join` with theirs:
+for a group, hand alice-bob.json itself to every member instead; each passes -c relay:alice-bob.json
+alice's invitation: unheld-relay://127.0.0.1:14448/3417ca7de405d3962157d6b43927b9c7dcda02d54d89b968cb024305af06a2fd/67da4eda11e59e59ce9f8d1da81363c560ec94cbe7f2fb72cc3d1563620124c1#f7b8552b24f033c0b08d34828105c84187bd7f4b03eb8ba5699959231b413703
+✓ alice-bob.json sends to  127.0.0.1:14448  and receives on 127.0.0.1:14448
+✓ bob-alice.json sends to  127.0.0.1:14448  and receives on 127.0.0.1:14448
 alice › through a relay that cannot read this
-what the relay's disk holds:
+bob › and back the other way
+what the relay's disk holds, one queue per direction:
+  1024 bytes  00000000000000000001
+  32 bytes  read
+  32 bytes  write
   1024 bytes  00000000000000000001
   32 bytes  read
   32 bytes  write
 
-12. an assistant reads and answers for alice, for the one peer she granted, through the same binary
+12. an assistant reads and answers for alice, for the one peer she granted, through the same binary and the same relay
 ✓ an agent may read and send with bob through unheld mcp
 revoke with `unheld peers revoke-agent`; the peer is not told, so tell them yourself
   agent sees: {"gap": null, "messages": [{"from": "bob", "ref": 0, "session_started": false, "text": "is your assistant reading this?\n", "untrusted": true}], "next_start": null, "peer": "bob", "refused_blobs": 0, "total": 1, "withheld": 0}
