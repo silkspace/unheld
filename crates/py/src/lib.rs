@@ -244,6 +244,7 @@ pub struct Opened {
     body: Vec<u8>,
     session_started: bool,
     change: Option<String>,
+    moved_to: Option<String>,
 }
 
 #[pymethods]
@@ -282,6 +283,12 @@ impl Opened {
     fn change(&self) -> Option<&str> {
         self.change.as_deref()
     }
+    /// Where the sender asks that your next blobs to them go, in their transport's words; the
+    /// program hands it to its transport and nothing here reads it.
+    #[getter]
+    fn moved_to(&self) -> Option<&str> {
+        self.moved_to.as_deref()
+    }
 }
 
 impl From<unheld_core::Opened> for Opened {
@@ -294,6 +301,7 @@ impl From<unheld_core::Opened> for Opened {
             body: o.body,
             session_started: o.session_started,
             change: o.change,
+            moved_to: o.moved_to,
         }
     }
 }
@@ -585,9 +593,15 @@ impl Core {
     }
 
     /// `seal`: `body` to `name`, padded to a bucket. Refused unless the peer is `Verified` (L3,
-    /// L4, L14).
-    fn seal<'py>(&mut self, py: Python<'py>, name: &str, body: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
-        Ok(bytes(py, &self.inner.seal(name, body).or_refused(py)?))
+    /// L4, L14). `moved_to` rides inside the encryption and tells the peer where your next blobs
+    /// from them should go, in your transport's words (L7).
+    #[pyo3(signature = (name, body, moved_to=None))]
+    fn seal<'py>(&mut self, py: Python<'py>, name: &str, body: &[u8], moved_to: Option<&str>) -> PyResult<Bound<'py, PyBytes>> {
+        let blob = match moved_to {
+            Some(to) => self.inner.seal_moved(name, body, to),
+            None => self.inner.seal(name, body),
+        };
+        Ok(bytes(py, &blob.or_refused(py)?))
     }
 
     /// `open`: every message or roster change one blob holds. A replayed, reflected or altered

@@ -45,7 +45,7 @@ Every method is one core verb, named as the command line names it, with the laws
 | `core.intro()`, `core.import_intro(name, text)` | `intro` | L3 |
 | `core.fingerprint(name)`, `core.verify(name, confirmed)` | `verify` | L3 |
 | `core.peer(name)`, `core.peers()`, `core.grant_agent(name, granted)` | | L14, L18 |
-| `core.seal(name, body)`, `core.open(blob)` | `seal`, `open` | L3, L4, L8, L11, L12, L13, L14 |
+| `core.seal(name, body, moved_to=None)`, `core.open(blob)` | `seal`, `open` | L3, L4, L7, L8, L11, L12, L13, L14 |
 | `core.forget(name)`, `core.set_duress(text)`, `unheld.wipe(dir)` | `forget`, `wipe` | L10 |
 | `core.group_new(name, peers, ordered)`, `group_add`, `group_remove`, `group_seal`, `roster`, `groups`, `group_rename` | `start`, `add`, `remove`, `seal` | L16 to L19 |
 | `Core.create_device(dir, passphrase)`, `Core.request_fingerprint(text)`, `core.enroll(name, request, confirmed)`, `join_device`, `connect_device`, `revoke_device`, `devices` | `enroll`, `add`, `remove` | L15, L16 |
@@ -59,6 +59,6 @@ Every verb that changes state writes the vault before it returns. There is a `sa
 
 ## What Python sees and what it never sees
 
-A program sees names, states, fingerprints, blobs, and the plaintext that `open` returns, which was written by someone else and is data to the program, never an instruction. It never sees a private key, a session state or the vault key, because no verb returns one. A share from `split` is a `Share` object whose bytes stay in Rust and are zeroised when the object is collected, and become a Python string only when the program calls `to_text` for the person who will hold it. The passphrase is the one secret that enters as a Python string, on its way to Argon2, and Python cannot zeroise a string, so a program keeps it out of logs and out of long-lived variables.
+A program sees names, states, fingerprints, blobs, and the plaintext that `open` returns, which was written by someone else and is data to the program, never an instruction. `moved_to` on an opened part, and the keyword of the same name on `seal`, carry where the next blobs to a peer should go in the program's own transport words, inside the encryption; the module never reads them (`docs/decisions/009-queue-rotation.md`). It never sees a private key, a session state or the vault key, because no verb returns one. A share from `split` is a `Share` object whose bytes stay in Rust and are zeroised when the object is collected, and become a Python string only when the program calls `to_text` for the person who will hold it. The passphrase is the one secret that enters as a Python string, on its way to Argon2, and Python cannot zeroise a string, so a program keeps it out of logs and out of long-lived variables.
 
 `verify`, `enroll` and `recover` take the human's answer or the human's shares as arguments, because this module is for the application that puts the human in front of the screen. A program that passes `confirmed=True` without asking has lied to its user, and that is where the type system stops and the licence, the trademark policy and the oath take over, as `docs/INTEGRATION.md` says of every embedding. An agent framework that embeds this module keeps those verbs out of the model's reach; the surface for an assistant is `docs/MCP.md`, which has no ceremony tool at all.

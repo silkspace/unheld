@@ -101,3 +101,9 @@ pub mod frame {
     pub const COUNT_LEN: usize = 1;
     pub const LEN_LEN: usize = 4;
 }
+
+/// What an application message carries inside the encryption: the body, and at most one more
+/// part, where the sender's next blobs should be put (docs/decisions/009-queue-rotation.md).
+pub mod payload {
+    pub const MAX_PARTS: usize = 2;
+}

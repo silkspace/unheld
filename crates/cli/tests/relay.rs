@@ -1,7 +1,8 @@
 //! L19 over the first ordered carrier: a group above the small bound forms over the relay, and a
 //! relay that orders differently for different readers forks the group into a refusal that is
 //! seen and not repaired (docs/decisions/006-relay.md). Two people hold one queue per direction
-//! and nothing either sends comes back to them (docs/decisions/008-queue-per-direction.md).
+//! and nothing either sends comes back to them (docs/decisions/008-queue-per-direction.md), and
+//! a reader whose queue is due moves inside a message (docs/decisions/009-queue-rotation.md).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -102,6 +103,7 @@ fn two_people_hold_one_queue_per_direction_and_neither_is_handed_back_what_they_
     link_a.join(&invite_b).unwrap();
     link_b.join(&invite_a).unwrap();
     assert!(!link_a.shared() && !link_b.shared());
+    link_a.since = 0;
 
     // In process the transport reaches one store, so each side's carrier is built over the relay its send half names
     // for puts and the relay its receive half names for gets, which here are two stores behind one `Transport`.
@@ -124,9 +126,30 @@ fn two_people_hold_one_queue_per_direction_and_neither_is_handed_back_what_they_
     assert!(matches!(a.get(), Err(unheld_blob::CarrierError::Empty)));
 
     // Each relay holds exactly one queue with the blobs one person wrote, and nothing of the other direction.
-    let store_a = std::fs::read_dir(tmp_existing("pair-relay-a").join("queues")).unwrap().count();
-    let store_b = std::fs::read_dir(tmp_existing("pair-relay-b").join("queues")).unwrap().count();
-    assert_eq!((store_a, store_b), (1, 1));
+    let queues = |name: &str| std::fs::read_dir(tmp_existing(name).join("queues")).unwrap().count();
+    assert_eq!((queues("pair-relay-a"), queues("pair-relay-b")), (1, 1));
+
+    // Alice's queue was made long ago, so her next message carries the next one; bob's client
+    // follows on opening it, his reply lands on the new queue, and the old one is deleted.
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    assert!(a.link().due(now));
+    let to = a.rotate().unwrap();
+    let old_id = a.link().receive.as_ref().unwrap().at.id;
+    a.put(&alice.seal_moved("bob", b"moving house", &a.link().moving_to().unwrap()).unwrap()).unwrap();
+    let opened = bob.open(&b.get().unwrap()).unwrap();
+    assert_eq!((opened[0].body.as_slice(), opened[0].moved_to.as_deref()), (&b"moving house"[..], Some(to.as_str())));
+    let mut followed = b.link().clone();
+    assert!(followed.join(opened[0].moved_to.as_deref().unwrap()).unwrap());
+    let mut b = RelayCarrier::new(followed, TwoRelays(Arc::clone(&relay_a), Arc::clone(&relay_b)), None);
+    b.put(&bob.seal("alice", b"found you").unwrap()).unwrap();
+    assert_eq!(alice.open(&a.get().unwrap()).unwrap()[0].body, b"found you");
+    assert_ne!(a.link().receive.as_ref().unwrap().at.id, old_id);
+    assert!(a.link().next.is_none() && !a.link().due(now));
+    assert_eq!((queues("pair-relay-a"), queues("pair-relay-b")), (1, 1), "the old queue is gone and the new one is the only one");
+    // The move is over, so the next message carries nothing beside its body.
+    a.put(&alice.seal("bob", b"settled").unwrap()).unwrap();
+    let opened = bob.open(&b.get().unwrap()).unwrap();
+    assert_eq!((opened[0].body.as_slice(), opened[0].moved_to.is_none()), (&b"settled"[..], true));
 }
 
 fn tmp_existing(name: &str) -> PathBuf {

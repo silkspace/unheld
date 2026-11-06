@@ -35,6 +35,13 @@ pub mod config {
         /// Seconds a connection may stay silent before the relay closes it.
         pub const SILENCE_SECS: u64 = 120;
     }
+    /// When a reader moves to a fresh queue (docs/decisions/009-queue-rotation.md).
+    pub mod rotate {
+        /// Seconds a queue is read before its reader makes the next one.
+        pub const SECS: u64 = 7 * 24 * 60 * 60;
+        /// Blobs collected from a queue before its reader makes the next one.
+        pub const BLOBS: u64 = 256;
+    }
     /// Names on the relay's disk.
     pub mod files {
         pub const CERT: &str = "cert.der";

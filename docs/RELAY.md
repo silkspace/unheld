@@ -17,6 +17,8 @@ A group uses one queue, because its commits need one order: whoever starts it ru
 
 A queue is the one carrier that orders, so a group above `config::group::SMALL` members forms over it and over nothing else (L19).
 
+A queue between two people is read for a week or for 256 blobs, whichever comes first, and then its reader moves (`docs/decisions/009-queue-rotation.md`). The move happens inside the next message the reader sends: the client makes the next queue on the same relay and the message carries its write half inside the encryption, so the other person's client points at it on opening and nothing is handed over by hand. The old queue is read until a blob appears on the new one, which means the one writer has moved, and is then collected once more and deleted. Both limits are constants in `crates/relay/src/lib.rs`. A group's queue does not move this way, because a reader cannot know that every writer has moved; the admin moves a group by hand.
+
 ## What the relay sees and cannot do
 
 It sees bucket sizes, times, the network addresses of those who connect, how many readers collect from one queue, and that every blob in one queue is one direction of one conversation. It cannot read a blob, forge one that opens, produce a roster change, or tell one person's queue from another's. A relay that drops a blob is caught by the reader's cursor, since numbers are dense, and a relay that serves two readers different orders forks their group into a refusal that is seen and not repaired.

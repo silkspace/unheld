@@ -2,9 +2,11 @@
 //! from, held with their capabilities and the read cursor in a file of its own, never in the
 //! vault (docs/decisions/008-queue-per-direction.md). Between two people the two queues are
 //! different and each is on the relay its reader chose; for a group they are one queue, and a
-//! holder skips the numbers it wrote itself. A number out of sequence is an error before the core
-//! sees the blob (L12). `LocalTransport` runs a relay in process, with an adversary at the
-//! switches, so the carrier is tested against a relay that drops, swaps and replays.
+//! holder skips the numbers it wrote itself. A reader moves to a fresh queue on a schedule and
+//! retires the old one only once the writer is known to have moved (009-queue-rotation.md). A
+//! number out of sequence is an error before the core sees the blob (L12). `LocalTransport` runs a
+//! relay in process, with an adversary at the switches, so the carrier is tested against a relay
+//! that drops, swaps and replays.
 
 use crate::config::{self, ID_LEN};
 use crate::store::{hash_of, Relay};
@@ -40,16 +42,26 @@ pub struct Half {
     pub capability: Capability,
 }
 
+/// A fresh queue of this holder's, both halves held until the other side has moved to it: the
+/// read half becomes `receive` then, and the write half is what every message until then carries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pending {
+    pub read: Half,
+    pub write: Half,
+}
+
 /// A conversation's queues as one person holds them. `send` is appended to and `receive` is
 /// collected from; they are two queues between two people and one queue for a group. `after` is
-/// the last number collected, and `mine` the numbers this holder wrote into a queue it also
-/// reads and has not yet passed.
+/// the last number collected, `mine` the numbers this holder wrote into a queue it also reads
+/// and has not yet passed, `since` when `receive` was made, and `next` the queue that replaces it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Link {
     pub send: Option<Half>,
     pub receive: Option<Half>,
     pub after: u64,
     pub mine: BTreeSet<u64>,
+    pub since: u64,
+    pub next: Option<Pending>,
 }
 
 /// The file form. Every field is lower-case hex but the relay's `host:port` and the numbers.
@@ -62,6 +74,12 @@ struct HalfFile {
 }
 
 #[derive(Serialize, Deserialize)]
+struct PendingFile {
+    read: HalfFile,
+    write: HalfFile,
+}
+
+#[derive(Serialize, Deserialize)]
 struct LinkFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     send: Option<HalfFile>,
@@ -71,6 +89,14 @@ struct LinkFile {
     after: u64,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     mine: BTreeSet<u64>,
+    #[serde(default)]
+    since: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    next: Option<PendingFile>,
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or_default()
 }
 
 /// A relay address with no queue, `unheld-relay://host:port#<pin>`, as `unheld-relay init` prints it.
@@ -128,6 +154,8 @@ impl Link {
             receive: file.receive.map(Half::from_file).transpose()?,
             after: file.after,
             mine: file.mine,
+            since: file.since,
+            next: file.next.map(|n| Ok::<_, RelayError>(Pending { read: Half::from_file(n.read)?, write: Half::from_file(n.write)? })).transpose()?,
         })
     }
 
@@ -137,6 +165,8 @@ impl Link {
             receive: self.receive.as_ref().map(Half::to_file),
             after: self.after,
             mine: self.mine.clone(),
+            since: self.since,
+            next: self.next.as_ref().map(|n| PendingFile { read: n.read.to_file(), write: n.write.to_file() }),
         };
         let text = serde_json::to_string_pretty(&file).map_err(|_| RelayError::BadAddress)?;
         std::fs::write(path, text)?;
@@ -154,10 +184,27 @@ impl Link {
         self.shared().then(|| self.send.as_ref().map(Half::to_text)).flatten()
     }
 
-    /// Point `send` at another person's queue, with the write half they handed over.
-    pub fn join(&mut self, invitation: &str) -> Result<(), RelayError> {
-        self.send = Some(Half::parse(invitation)?);
-        Ok(())
+    /// Point `send` at another person's queue, with the write half they handed over. `false`
+    /// when it already pointed there.
+    pub fn join(&mut self, invitation: &str) -> Result<bool, RelayError> {
+        let half = Half::parse(invitation)?;
+        let changed = self.send.as_ref() != Some(&half);
+        self.send = Some(half);
+        Ok(changed)
+    }
+
+    /// Whether the queue read here has been read long enough, or filled far enough, that its
+    /// reader should make the next one. Never for a group's queue, and never twice at once.
+    pub fn due(&self, now: u64) -> bool {
+        self.receive.is_some()
+            && self.next.is_none()
+            && !self.shared()
+            && (now.saturating_sub(self.since) >= config::rotate::SECS || self.after >= config::rotate::BLOBS)
+    }
+
+    /// The write half the other side should be told about, while a move is in progress.
+    pub fn moving_to(&self) -> Option<String> {
+        self.next.as_ref().map(|n| n.write.to_text())
     }
 
     /// Move the cursor over every number this holder wrote that is next in line.
@@ -329,6 +376,7 @@ impl<T: Transport> RelayCarrier<T> {
         let link = Link {
             send: Some(Half { at: at.clone(), capability: write }),
             receive: Some(Half { at, capability: read }),
+            since: now(),
             ..Link::default()
         };
         Ok(RelayCarrier { link, transport, path: None })
@@ -336,6 +384,42 @@ impl<T: Transport> RelayCarrier<T> {
 
     pub fn link(&self) -> &Link {
         &self.link
+    }
+
+    /// Make the next queue on the relay the current one is on, hold both halves, and return the
+    /// write half as the text every message carries until the other side has moved. Refused
+    /// while a move is in progress or for a group's queue.
+    pub fn rotate(&mut self) -> Result<String, RelayError> {
+        let current = self.link.receive.as_ref().ok_or(RelayError::Refused("this link has no queue to rotate"))?;
+        if self.link.next.is_some() || self.link.shared() {
+            return Err(RelayError::Refused("a move is already in progress, or this is a group's queue"));
+        }
+        let at = Endpoint { relay: current.at.relay.clone(), pin: current.at.pin, id: random() };
+        let (write, read): (Capability, Capability) = (random(), random());
+        match self.transport.call(&at, &Request::Create { id: at.id, write: hash_of(&write), read: hash_of(&read) })? {
+            Response::Done => {}
+            Response::Full => return Err(RelayError::Refused("the relay holds its maximum of queues")),
+            _ => return Err(RelayError::Refused("the relay did not create the queue")),
+        }
+        let pending = Pending { read: Half { at: at.clone(), capability: read }, write: Half { at, capability: write } };
+        let text = pending.write.to_text();
+        self.link.next = Some(pending);
+        self.save()?;
+        Ok(text)
+    }
+
+    /// One `get` on a half, with the order checked, without moving any cursor.
+    fn fetch(&mut self, half: &Half, after: u64) -> Result<Option<Blob>, CarrierError> {
+        match self.transport.call(&half.at, &Request::Get { id: half.at.id, read: half.capability, after }).map_err(io)? {
+            Response::Next(seq, blob) => {
+                if seq != after + 1 {
+                    return Err(CarrierError::Disordered { expected: after + 1, got: seq });
+                }
+                Ok(Some(blob))
+            }
+            Response::Nothing => Ok(None),
+            _ => Err(CarrierError::Refused("the relay refused the read")),
+        }
     }
 
     fn save(&self) -> Result<(), RelayError> {
@@ -377,29 +461,51 @@ impl<T: Transport> Carrier for RelayCarrier<T> {
         let receive = self.link.receive.clone().ok_or(CarrierError::Refused("this link has no queue to receive on; make one with `unheld relay new`"))?;
         let was = self.link.after;
         self.link.skip_mine();
-        let after = self.link.after;
-        let request = Request::Get { id: receive.at.id, read: receive.capability, after };
-        let result = match self.transport.call(&receive.at, &request).map_err(io)? {
-            Response::Next(seq, blob) => {
-                if seq != after + 1 {
-                    return Err(CarrierError::Disordered { expected: after + 1, got: seq });
-                }
-                self.link.after = seq;
-                Ok(blob)
-            }
-            Response::Nothing => Err(CarrierError::Empty),
-            _ => Err(CarrierError::Refused("the relay refused the read")),
-        };
+        let result = self.fetch(&receive, self.link.after);
+        if let Ok(Some(_)) = &result {
+            self.link.after += 1;
+        }
         if self.link.after != was {
             self.save().map_err(io)?;
         }
-        result
+        match result? {
+            Some(blob) => Ok(blob),
+            None => match self.link.next.clone() {
+                None => Err(CarrierError::Empty),
+                Some(next) => self.take_over(receive, next),
+            },
+        }
     }
 
     fn ordered(&self) -> bool {
         true
     }
 }
+
+impl<T: Transport> RelayCarrier<T> {
+    /// The old queue said nothing; look at the next one. A blob there means the one writer has
+    /// moved, so everything they wrote to the old queue is already in it: one more look collects
+    /// a straggler, and after that the old queue is finished and deleted (L11, L12).
+    fn take_over(&mut self, old: Half, next: Pending) -> Result<Blob, CarrierError> {
+        let Some(first) = self.fetch(&next.read, 0)? else {
+            return Err(CarrierError::Empty);
+        };
+        if let Some(straggler) = self.fetch(&old, self.link.after)? {
+            self.link.after += 1;
+            self.save().map_err(io)?;
+            return Ok(straggler);
+        }
+        let _ = self.transport.call(&old.at, &Request::Delete { id: old.at.id, read: old.capability });
+        self.link.receive = Some(next.read);
+        self.link.after = 1;
+        self.link.mine.clear();
+        self.link.since = now();
+        self.link.next = None;
+        self.save().map_err(io)?;
+        Ok(first)
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -427,11 +533,14 @@ mod tests {
     fn a_link_file_round_trips_and_an_invitation_names_where_which_and_one_right() {
         let dir = tmp("file");
         let at = Endpoint { relay: "relay.example:4443".into(), pin: Pin([5; 32]), id: [6; 32] };
+        let next_at = Endpoint { relay: "relay.example:4443".into(), pin: Pin([5; 32]), id: [9; 32] };
         let mut link = Link {
             send: Some(Half { at: at.clone(), capability: [7; 32] }),
             receive: Some(Half { at, capability: [8; 32] }),
             after: 9,
             mine: BTreeSet::from([11, 12]),
+            since: 1_700_000_000,
+            next: Some(Pending { read: Half { at: next_at.clone(), capability: [10; 32] }, write: Half { at: next_at, capability: [11; 32] } }),
         };
         link.save(&dir.join("q.json")).unwrap();
         assert_eq!(Link::load(&dir.join("q.json")).unwrap(), link);
@@ -536,6 +645,77 @@ mod tests {
         assert_eq!(honest.get().unwrap(), blob(3));
         assert!(matches!(honest.get(), Err(CarrierError::Empty)));
         assert_eq!(honest.link().after, 4);
+    }
+
+    /// A relay whose one writer is racing the reader: the first look at the new queue happens
+    /// just after the writer put a last blob on the old one and moved.
+    struct Racing {
+        relay: Arc<Relay>,
+        new_queue: QueueId,
+        straggler: Option<Request>,
+    }
+
+    impl Transport for Racing {
+        fn call(&mut self, _at: &Endpoint, request: &Request) -> Result<Response, RelayError> {
+            if matches!(request, Request::Get { id, .. } if *id == self.new_queue) {
+                if let Some(put) = self.straggler.take() {
+                    self.relay.handle(put)?;
+                }
+            }
+            self.relay.handle(request.clone())
+        }
+    }
+
+    #[test]
+    fn a_reader_moves_when_due_and_retires_the_old_queue_only_once_its_writer_has_moved() {
+        let dir = tmp("rotate");
+        let relay = Arc::new(Relay::open(&dir, Limits::default()).unwrap());
+        let mut made = RelayCarrier::create_on(local(&relay), "local", Pin([0; 32])).unwrap();
+        let invitation = made.link().invitation().unwrap();
+        let old = made.link().receive.clone().unwrap();
+        assert!(!made.link().due(u64::MAX), "a group's queue never rotates");
+        assert!(made.rotate().is_err(), "and refuses to, rather than guess");
+
+        // Alice holds the read half of a queue made long ago; bob holds its write half.
+        let mut alice = RelayCarrier::new(Link { send: None, since: 0, ..made.link().clone() }, local(&relay), None);
+        let mut bob = RelayCarrier::new(Link { send: Some(Half::parse(&invitation).unwrap()), ..Link::default() }, local(&relay), None);
+        assert!(!alice.link().due(config::rotate::SECS - 1));
+        assert!(alice.link().due(config::rotate::SECS));
+        assert!(RelayCarrier::new(Link { after: config::rotate::BLOBS, since: u64::MAX, ..alice.link().clone() }, local(&relay), None).link().due(u64::MAX));
+
+        bob.put(&blob(1)).unwrap();
+        let to = alice.rotate().unwrap();
+        assert!(alice.rotate().is_err(), "one move at a time");
+        assert_eq!(alice.link().moving_to(), Some(to.clone()));
+        assert!(!alice.link().due(u64::MAX), "not due again while moving");
+        let new = alice.link().next.clone().unwrap();
+
+        // Bob has not moved: what he writes still lands on the old queue and is read from there.
+        bob.put(&blob(2)).unwrap();
+        assert_eq!(alice.get().unwrap(), blob(1));
+        assert_eq!(alice.get().unwrap(), blob(2));
+        assert!(matches!(alice.get(), Err(CarrierError::Empty)));
+        assert!(alice.link().next.is_some(), "nothing on the new queue yet, so the old one stays");
+
+        // Bob moves, having put one last blob on the old queue a moment before, and writes on the new one.
+        let mut moved = bob.link().clone();
+        assert!(moved.join(&to).unwrap());
+        assert!(!moved.join(&to).unwrap(), "joining where one already is changes nothing");
+        let mut bob = RelayCarrier::new(moved, local(&relay), None);
+        let straggler = Request::Put { id: old.at.id, write: Half::parse(&invitation).unwrap().capability, blob: blob(3) };
+        bob.put(&blob(4)).unwrap();
+        let mut alice = RelayCarrier::new(alice.link().clone(), Racing { relay: Arc::clone(&relay), new_queue: new.read.at.id, straggler: Some(straggler) }, None);
+        assert_eq!(alice.get().unwrap(), blob(3), "the straggler on the old queue comes first");
+        assert!(alice.link().next.is_some());
+        assert_eq!(alice.get().unwrap(), blob(4), "then the first blob on the new queue, and the old one is retired");
+        let link = alice.link().clone();
+        assert_eq!(link.receive.as_ref().map(|h| h.at.id), Some(new.read.at.id));
+        assert_eq!((link.after, link.next.is_none(), link.moving_to()), (1, true, None));
+        assert!(link.since > 0 && !link.due(link.since));
+        assert_eq!(relay.handle(Request::Get { id: old.at.id, read: old.capability, after: 0 }).unwrap(), Response::Refused, "the old queue is gone");
+        bob.put(&blob(5)).unwrap();
+        assert_eq!(alice.get().unwrap(), blob(5));
+        assert!(matches!(alice.get(), Err(CarrierError::Empty)));
     }
 
     #[test]

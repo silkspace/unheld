@@ -308,10 +308,11 @@ impl Server {
             self.core.peer(peer).map_err(refused)?;
             return Err(refused(Refuse::NoGrant));
         }
-        let blob = self.core.seal(peer, text.as_bytes()).map_err(|r| match r {
+        let blob = crate::seal_over(&mut self.core, peer, text.as_bytes(), &self.carrier_spec).map_err(|r| match r {
             Refuse::TooLarge => (Refuse::TooLarge, json!({ "limit_bytes": unheld_blob::config::BUCKETS[unheld_blob::config::BUCKETS.len() - 1] })),
             other => refused(other),
         })?;
+        self.reopen().map_err(refused)?;
         self.carrier.put(&blob).map_err(|e| refused(crate::carrier_refusal(e)))?;
         Ok(json!({ "peer": peer, "bytes": blob.len() }))
     }
@@ -342,7 +343,19 @@ impl Server {
         }
     }
 
+    /// The link file is the carrier's state; after anything else wrote it, read it again.
+    fn reopen(&mut self) -> Result<(), Refuse> {
+        if crate::relay_path(&self.carrier_spec).is_some() {
+            self.carrier = crate::carrier(&self.carrier_spec)?;
+        }
+        Ok(())
+    }
+
     fn record(&mut self, p: Opened) {
+        if let Some(to) = &p.moved_to {
+            crate::follow_move(&self.carrier_spec, &p.from, to);
+            let _ = self.reopen();
+        }
         if !self.granted(&p.from) {
             if !p.body.is_empty() || p.change.is_some() {
                 *self.withheld.entry(p.from).or_insert(0) += 1;

@@ -126,6 +126,9 @@ class Opened:
     session_started: bool
     change: str | None
     """A roster change, in words, when this part was a commit."""
+    moved_to: str | None
+    """Where the sender asks that your next blobs to them go, in their transport's words. The
+    program hands it to its transport; nothing in the module reads it."""
 
 class Outbound:
     """One blob and who it is for, from a verb that writes to more than one set of readers."""
@@ -241,9 +244,10 @@ class Core:
     def grant_agent(self, name: str, granted: bool) -> Peer:
         """Let an agent read and send with this peer through ``unheld mcp``, or stop letting
         it. The person's decision, never a program's on its own."""
-    def seal(self, name: str, body: bytes) -> bytes:
+    def seal(self, name: str, body: bytes, moved_to: str | None = None) -> bytes:
         """``body`` to ``name``, padded to a bucket. Refused unless the peer is ``Verified``
-        (L3, L4, L14)."""
+        (L3, L4, L14). ``moved_to`` rides inside the encryption and tells the peer where your
+        next blobs from them should go, in your transport's words (L7)."""
     def open(self, blob: bytes) -> list[Opened]:
         """Every message or roster change one blob holds. A replayed, reflected or altered blob
         is refused (L11, L12, L13)."""

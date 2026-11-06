@@ -142,7 +142,7 @@ Two bindings in the welcome carry the weight: the recipient's identity key named
 Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe, the clipboard or a relay queue with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. The same core is a Python module with every verb, so a program in Python moves the bytes and holds no key. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
-cargo test --workspace            # 43 tests: laws L1, L3, L4, L8, L10 to L19, L21, the agent surface and the crate graph
+cargo test --workspace            # 44 tests: laws L1, L3, L4, L8, L10 to L19, L21, the agent surface and the crate graph
 cd crates/py && uv sync && uv run pytest -q   # the same laws from Python, a list as the carrier
 ./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
 ./scripts/fuzz.sh 60              # seven fuzz targets, one per parser that reads bytes from outside, 60 s each
@@ -231,7 +231,7 @@ alice › yes, and it holds no key
 
 </details>
 
-Not yet: property tests per law, queue rotation and the onion transport for the relay, reproducible builds, the log. See TRACE.md for which rows are green.
+Not yet: property tests per law, rotation of a group's queue and the onion transport for the relay, reproducible builds, the log. See TRACE.md for which rows are green.
 
 Primitives are never written here. Ratchet: [OpenMLS](https://github.com/openmls/openmls). Tor: [Arti](https://gitlab.torproject.org/tpo/core/arti). Everything else: RustCrypto, pinned, under `cargo deny` and `cargo vet`. We hand-roll the architecture and not one byte of crypto. See [`docs/decisions/001`](docs/decisions/001-ratchet-and-licence.md) for why not libsignal (licence, not safety).
 

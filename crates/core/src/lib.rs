@@ -160,11 +160,14 @@ pub struct Opened {
     pub session_started: bool,
     /// A roster change, in words, when this part was a commit.
     pub change: Option<String>,
+    /// Where the sender asks that your next blobs to them be put, in the words of their carrier.
+    /// The core carries it and never reads it; the client hands it to the carrier it names.
+    pub moved_to: Option<String>,
 }
 
 impl Opened {
     fn pairwise(from: String, body: Vec<u8>, session_started: bool) -> Opened {
-        Opened { from, trust: MemberTrust::Verified, vouched_by: None, group: None, body, session_started, change: None }
+        Opened { from, trust: MemberTrust::Verified, vouched_by: None, group: None, body, session_started, change: None, moved_to: None }
     }
 }
 
@@ -473,6 +476,16 @@ impl Core {
 
     /// `seal`: encrypt `body` to a verified peer, starting a session if none exists.
     pub fn seal(&mut self, name: &str, body: &[u8]) -> Result<Blob, Refuse> {
+        self.seal_to(name, body, None)
+    }
+
+    /// `seal`, carrying beside the body where the peer should put their next blobs to you: your
+    /// carrier's words for a new queue, which the core never reads (L7).
+    pub fn seal_moved(&mut self, name: &str, body: &[u8], moved_to: &str) -> Result<Blob, Refuse> {
+        self.seal_to(name, body, Some(moved_to))
+    }
+
+    fn seal_to(&mut self, name: &str, body: &[u8], moved_to: Option<&str>) -> Result<Blob, Refuse> {
         let rec = self.state.peers.get(name).ok_or(Refuse::UnknownPeer)?.clone();
         match rec.state {
             PeerState::Verified => {}
@@ -508,7 +521,7 @@ impl Core {
             parts.push(update);
         }
         let msg = group
-            .create_message(&self.provider, &signer, body)
+            .create_message(&self.provider, &signer, &pack_payload(body, moved_to)?)
             .map_err(mls_err)?;
         parts.push(msg.to_bytes().map_err(mls_err)?);
         let blob = Blob::pad(&frame(&parts)?).map_err(|_| Refuse::TooLarge)?;
@@ -574,6 +587,7 @@ impl Core {
                 body: Vec::new(),
                 session_started: true,
                 change: Some(format!("{sender} welcomed you to a group of {members}; {unverified} of them you never verified")),
+                moved_to: None,
             });
         }
         if let Some(r) = self.state.peers.get_mut(&sender) {
@@ -599,7 +613,7 @@ impl Core {
                 if let Some(id) = self.state.identity.as_mut() {
                     id.ring = Some(gid);
                 }
-                return Ok(Opened { from: device_name.clone(), trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(format!("{device_name} is now a device of this identity")) });
+                return Ok(Opened { from: device_name.clone(), trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(format!("{device_name} is now a device of this identity")), moved_to: None });
             }
             _ if others.len() == 1 => match self.verified_peer(&others[0]) {
                 Some(name) => (Expected::Pair(name.clone()), format!("your session with {name} now reaches {device_name}")),
@@ -628,7 +642,7 @@ impl Core {
                 self.state.groups.insert(local, GroupRecord { group_id: gid, admin });
             }
         }
-        Ok(Opened { from: device_name, trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(text) })
+        Ok(Opened { from: device_name, trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(text), moved_to: None })
     }
 
     /// Where a group id lives: a pairwise session with a peer, a named group, or the ring.
@@ -704,7 +718,8 @@ impl Core {
                     self.receive_ring(&app.into_bytes())?;
                     return Ok(None);
                 }
-                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body: app.into_bytes(), session_started: false, change: None }))
+                let (body, moved_to) = unpack_payload(&app.into_bytes())?;
+                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body, session_started: false, change: None, moved_to }))
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
                 // A sender whose new leaf names another identity is rotating its key, and may do
@@ -789,7 +804,7 @@ impl Core {
                 if matches!(located, Located::Ring) {
                     return Ok(None);
                 }
-                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body: Vec::new(), session_started: false, change: Some(change) }))
+                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body: Vec::new(), session_started: false, change: Some(change), moved_to: None }))
             }
             _ => Ok(None),
         }
@@ -1019,6 +1034,25 @@ fn frame(parts: &[Vec<u8>]) -> Result<Vec<u8>, Refuse> {
         out.extend_from_slice(p);
     }
     Ok(out)
+}
+
+/// The body and, when the sender has moved, their new address, as one framed plaintext.
+pub(crate) fn pack_payload(body: &[u8], moved_to: Option<&str>) -> Result<Vec<u8>, Refuse> {
+    let mut parts = vec![body.to_vec()];
+    if let Some(to) = moved_to {
+        parts.push(to.as_bytes().to_vec());
+    }
+    frame(&parts)
+}
+
+fn unpack_payload(bytes: &[u8]) -> Result<(Vec<u8>, Option<String>), Refuse> {
+    let mut parts = unframe(bytes).map_err(|_| Refuse::Protocol)?.into_iter();
+    let body = parts.next().ok_or(Refuse::Protocol)?;
+    let moved_to = parts.next().map(|p| String::from_utf8(p).map_err(|_| Refuse::Protocol)).transpose()?;
+    if parts.next().is_some() {
+        return Err(Refuse::Protocol);
+    }
+    Ok((body, moved_to))
 }
 
 fn unframe(bytes: &[u8]) -> Result<Vec<Vec<u8>>, Refuse> {

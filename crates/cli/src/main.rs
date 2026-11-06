@@ -7,7 +7,7 @@ use unheld_core::vocab::{MemberTrust, PeerState};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use unheld_blob::Carrier;
+use unheld_blob::{Blob, Carrier};
 use unheld_carriers::{ClipboardCarrier, FileCarrier, RelayCarrier, StdioCarrier};
 use unheld_core::config;
 use unheld_core::vocab::Refuse;
@@ -346,6 +346,47 @@ fn read_stdin() -> Result<Vec<u8>, Refuse> {
     Ok(buf)
 }
 
+/// The link file behind a `relay:` spec, which is the one carrier with an address to move.
+fn relay_path(spec: &str) -> Option<&Path> {
+    match spec.split_once(':') {
+        Some(("relay", path)) => Some(Path::new(path)),
+        _ => None,
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or_default()
+}
+
+/// Seal to a peer over `spec`. Over a relay link whose queue is due, the next queue is made first
+/// and its write half rides inside this message, as it does inside every message until the peer
+/// has moved (docs/decisions/009-queue-rotation.md).
+fn seal_over(core: &mut Core, name: &str, body: &[u8], spec: &str) -> Result<Blob, Refuse> {
+    let Some(path) = relay_path(spec) else {
+        return core.seal(name, body);
+    };
+    let mut link = RelayCarrier::open(path).map_err(|_| Refuse::CarrierIo)?;
+    if link.link().due(unix_now()) {
+        link.rotate().map_err(|_| Refuse::CarrierIo)?;
+        eprintln!("{} {}", style::warn("·"), style::dim("your queue has been read long enough; the next one rides inside this message"));
+    }
+    match link.link().moving_to() {
+        Some(to) => core.seal_moved(name, body, &to),
+        None => core.seal(name, body),
+    }
+}
+
+/// A peer says where their next blobs should go: over a relay link, point the link there.
+fn follow_move(spec: &str, from: &str, to: &str) {
+    match relay_path(spec).map(|path| RelayCarrier::join(path, to)) {
+        Some(Ok(link)) if link.send.as_ref().is_some_and(|h| h.to_text() == to) => {
+            eprintln!("{} {}", style::warn("·"), style::dim(&format!("{from} moved their queue; your next message to them goes there")));
+        }
+        Some(_) => eprintln!("{} {}", style::warn("·"), style::dim(&format!("{from} moved their queue and the link file could not be changed; run `unheld relay join <file> {to}`"))),
+        None => eprintln!("{} {}", style::warn("·"), style::dim(&format!("{from} moved their queue; run `unheld relay join <file> {to}`"))),
+    }
+}
+
 fn carrier(spec: &str) -> Result<Box<dyn Carrier>, Refuse> {
     match spec.split_once(':') {
         Some(("file", path)) => Ok(Box::new(FileCarrier::new(path))),
@@ -461,7 +502,6 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             }
         }
         Cmd::Send { name, carrier: spec } => {
-            let mut out = carrier(&spec)?;
             if std::io::stdin().is_terminal() {
                 eprintln!("{}", style::dim(&format!("message to {name}: type, press Enter, then Ctrl-D to seal")));
             }
@@ -470,8 +510,8 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                 return Err(Refuse::EmptyMessage);
             }
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
-            let blob = core.seal(&name, &body)?;
-            out.put(&blob).map_err(|_| Refuse::CarrierIo)?;
+            let blob = seal_over(&mut core, &name, &body, &spec)?;
+            carrier(&spec)?.put(&blob).map_err(carrier_refusal)?;
             if let Some((kind, path)) = spec.split_once(':') {
                 let shown = Path::new(path).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
                 eprintln!("{} {}", style::ok("✓"), style::dim(&format!("sealed {} bytes into {kind} {shown}", blob.len())));
@@ -493,6 +533,9 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                     };
                     let text = String::from_utf8_lossy(&m.body);
                     println!("{who} {}", text.strip_suffix('\n').unwrap_or(&text));
+                }
+                if let Some(to) = &m.moved_to {
+                    follow_move(&spec, &m.from, to);
                 }
             }
         }
