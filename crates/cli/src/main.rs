@@ -376,6 +376,15 @@ fn seal_over(core: &mut Core, name: &str, body: &[u8], spec: &str) -> Result<Blo
     }
 }
 
+/// What a peer's message says about who reads what you send them, when it changed.
+fn agent_reads_line(from: &str, reads: bool) -> String {
+    if reads {
+        format!("{from} says an assistant reads what you send them")
+    } else {
+        format!("{from} says no assistant reads what you send them now")
+    }
+}
+
 /// A peer says where their next blobs should go: over a relay link, point the link there.
 fn follow_move(spec: &str, from: &str, to: &str) {
     match relay_path(spec).map(|path| RelayCarrier::join(path, to)) {
@@ -469,12 +478,13 @@ fn run(cli: Cli) -> Result<(), Refuse> {
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
             let p = core.grant_agent(&name, true)?;
             println!("{} an agent may read and send with {} through {}", style::ok("✓"), style::name(&p.name), style::dim("unheld mcp"));
-            println!("{}", style::dim("revoke with `unheld peers revoke-agent`; the peer is not told, so tell them yourself"));
+            println!("{}", style::dim(&format!("{} is told inside your next message; revoke with `unheld peers revoke-agent`", p.name)));
         }
         Cmd::Peers { cmd: Some(PeersCmd::RevokeAgent { name }) } => {
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
             let p = core.grant_agent(&name, false)?;
             println!("{} no agent reads or sends with {}", style::ok("✓"), style::name(&p.name));
+            println!("{}", style::dim(&format!("{} is told inside your next message", p.name)));
         }
         Cmd::Peers { cmd: None } => {
             let core = Core::unlock(&dir, &passphrase(false)?)?;
@@ -492,10 +502,11 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                         style::name(&p.name),
                         style::hash(&p.fingerprint_prefix),
                         style::dim(&format!(
-                            "sessions {}  intro {}{}",
+                            "sessions {}  intro {}{}{}",
                             p.sessions,
                             if p.has_intro { "unused" } else { "consumed" },
-                            if p.agent_access { "  agent" } else { "" }
+                            if p.agent_access { "  agent" } else { "" },
+                            if p.agent_reads { "  their agent" } else { "" }
                         ))
                     );
                 }
@@ -510,6 +521,9 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                 return Err(Refuse::EmptyMessage);
             }
             let mut core = Core::unlock(&dir, &passphrase(false)?)?;
+            if core.peer(&name)?.agent_reads {
+                eprintln!("{} {}", style::warn("·"), style::dim(&format!("an assistant reads what {name} receives")));
+            }
             let blob = seal_over(&mut core, &name, &body, &spec)?;
             carrier(&spec)?.put(&blob).map_err(carrier_refusal)?;
             if let Some((kind, path)) = spec.split_once(':') {
@@ -536,6 +550,9 @@ fn run(cli: Cli) -> Result<(), Refuse> {
                 }
                 if let Some(to) = &m.moved_to {
                     follow_move(&spec, &m.from, to);
+                }
+                if let Some(reads) = m.agent_reads {
+                    eprintln!("{} {}", style::warn("·"), agent_reads_line(&m.from, reads));
                 }
             }
         }

@@ -218,6 +218,7 @@ pub struct Peer {
     sessions: usize,
     has_intro: bool,
     agent_access: bool,
+    agent_reads: bool,
 }
 
 impl From<unheld_core::Peer> for Peer {
@@ -229,6 +230,7 @@ impl From<unheld_core::Peer> for Peer {
             sessions: p.sessions,
             has_intro: p.has_intro,
             agent_access: p.agent_access,
+            agent_reads: p.agent_reads,
         }
     }
 }
@@ -245,6 +247,7 @@ pub struct Opened {
     session_started: bool,
     change: Option<String>,
     moved_to: Option<String>,
+    agent_reads: Option<bool>,
 }
 
 #[pymethods]
@@ -289,6 +292,13 @@ impl Opened {
     fn moved_to(&self) -> Option<&str> {
         self.moved_to.as_deref()
     }
+
+    /// The sender says something new about who reads your messages to them: `True` when an
+    /// assistant now does, `False` when none does any longer, `None` when nothing changed.
+    #[getter]
+    fn agent_reads(&self) -> Option<bool> {
+        self.agent_reads
+    }
 }
 
 impl From<unheld_core::Opened> for Opened {
@@ -302,6 +312,7 @@ impl From<unheld_core::Opened> for Opened {
             session_started: o.session_started,
             change: o.change,
             moved_to: o.moved_to,
+            agent_reads: o.agent_reads,
         }
     }
 }

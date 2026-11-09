@@ -110,6 +110,8 @@ class Peer:
     has_intro: bool
     agent_access: bool
     """The person has let an agent read and send with this peer through ``unheld mcp``."""
+    agent_reads: bool
+    """The peer says an assistant reads what you send them; every message of theirs says whether."""
 
 class Opened:
     """A message ``open`` produced, or a roster change every member gets to see (L16)."""
@@ -129,6 +131,9 @@ class Opened:
     moved_to: str | None
     """Where the sender asks that your next blobs to them go, in their transport's words. The
     program hands it to its transport; nothing in the module reads it."""
+    agent_reads: bool | None
+    """The sender says something new about who reads your messages to them: ``True`` when an
+    assistant now does, ``False`` when none does any longer, ``None`` when nothing changed."""
 
 class Outbound:
     """One blob and who it is for, from a verb that writes to more than one set of readers."""

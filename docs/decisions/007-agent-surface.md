@@ -1,6 +1,6 @@
 # 007: an assistant is a renderer with a grant, and the ceremonies have no tool
 
-**Status.** Accepted; in the tree as `unheld mcp`, `unheld peers grant-agent` and the `agent_access` field of a peer. The tool surface was fixed in `docs/MCP.md` before this note and is unchanged by it; this note records what the grant is, where it lives, and what an agent can and cannot reach.
+**Status.** Accepted; in the tree as `unheld mcp`, `unheld peers grant-agent` and the `agent_access` field of a peer. The peer is told of a grant inside every message since `010-agent-told.md`. The tool surface was fixed in `docs/MCP.md` before this note and is unchanged by it; this note records what the grant is, where it lives, and what an agent can and cannot reach.
 
 **Laws touched.** L3 (verification is the only constructor), L11 to L13 (what `open` refuses), L14 (key change blocks), L18 (member standing shown), L22 (no creator input). Nothing near a key changes; the vault gains one boolean per peer.
 
@@ -28,4 +28,4 @@ The same thing every carrier sees: nothing. The model runs where the person runs
 
 ## What is not here
 
-Telling the peer that an agent reads the conversation, which `docs/MCP.md` wants on the next message after a grant, is a field in a message and so a change to what an observer learns (AGENTS.md, rule 7) and is its own note. Group messages are read through the grant of their sender and there is no tool to send to a group. A grant with a scope narrower than a peer, a time limit on a grant, and a count of what the agent sent are later.
+Telling the peer that an agent reads the conversation, which `docs/MCP.md` wants on the next message after a grant, is a field in a message and so a change to what an observer learns (AGENTS.md, rule 7) and is its own note, `010-agent-told.md`. Group messages are read through the grant of their sender and there is no tool to send to a group. A grant with a scope narrower than a peer, a time limit on a grant, and a count of what the agent sent are later.

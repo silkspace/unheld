@@ -24,7 +24,7 @@ That first line is the whole threat model. Correctness is a square that commutes
 
 **Us too.** No verb takes an input we hold at runtime. No account, no remote config, no feature flag, no kill switch, no forced update. The only artefact we control is the binary, so: reproducible builds, independent builders attesting the hash, k-of-n maintainer signatures across jurisdictions, a public transparency log, and `install : Release × Log → () ⊕ Refuse`. If we're compelled, the fork works on day one. iOS is the exception, because Apple re-signs everything, and we say so.
 
-**Agents are correspondents.** `unheld mcp` exposes `message_send` and `messages_read` to a model, for the peers you granted with `unheld peers grant-agent`, and deliberately has no `verify`, `enroll`, `rotate`, `split` or `wipe` tool, so a prompt injection cannot perform a ceremony. Your assistant uses your vault under a grant you made, over a carrier that sees ciphertext. The model vendor is just another `Blob → ()`.
+**Agents are correspondents.** `unheld mcp` exposes `message_send` and `messages_read` to a model, for the peers you granted with `unheld peers grant-agent`, and deliberately has no `verify`, `enroll`, `rotate`, `split` or `wipe` tool, so a prompt injection cannot perform a ceremony. Your assistant uses your vault under a grant you made, over a carrier that sees ciphertext, and every message you send says inside the encryption whether an assistant reads the answer, so the other person always knows. The model vendor is just another `Blob → ()`.
 
 ## try it
 
@@ -142,7 +142,7 @@ Two bindings in the welcome carry the weight: the recipient's identity key named
 Proof of concept. Profiles exchange introductions, compare a pairwise 60-digit number, and talk one to one or in groups through a file, a pipe, the clipboard or a relay queue with Messaging Layer Security underneath and an Argon2id-locked vault at rest, and a second device joins an identity only after a device that already is one has seen its digits. The same core is a Python module with every verb, so a program in Python moves the bytes and holds no key. Sending before verification is refused, a welcome from an unverified sender is refused and its group deleted, replay and tampering are refused, a roster change from anyone but the admin is refused, and the carriers crate is checked by test to depend on nothing that can name a key.
 
 ```
-cargo test --workspace            # 44 tests: laws L1, L3, L4, L8, L10 to L19, L21, the agent surface and the crate graph
+cargo test --workspace            # 45 tests: laws L1, L3, L4, L8, L10 to L19, L21, the agent surface and the crate graph
 cd crates/py && uv sync && uv run pytest -q   # the same laws from Python, a list as the carrier
 ./scripts/prove.sh                # Tamarin: every lemma in formal/unheld.spthy
 ./scripts/fuzz.sh 60              # seven fuzz targets, one per parser that reads bytes from outside, 60 s each
@@ -156,9 +156,9 @@ The fuzz targets start from one real object of each kind, a welcome, a message, 
 
 ```
 1. two identities, keys generated on device
-✓ identity created  alice  64fa0a834b
+✓ identity created  alice  f269e56487
 keys live in this vault and nowhere else
-✓ identity created  bob  bd3acd78b1
+✓ identity created  bob  f729017593
 keys live in this vault and nowhere else
 
 2. introductions exchanged out of band (here: files)
@@ -172,8 +172,8 @@ refused: peer is not verified; run `verify` and compare the digits
 exit 2
 
 4. the pairwise number is the same on both sides
-  18409 24497 79404 36712 71496 40808 03322 43121 62138 48066 58903 65686
-  18409 24497 79404 36712 71496 40808 03322 43121 62138 48066 58903 65686
+  37042 06940 53245 99907 41891 47512 58630 54416 07708 87039 13592 44896
+  37042 06940 53245 99907 41891 47512 58630 54416 07708 87039 13592 44896
 
 5. both confirm by voice (here: yes on stdin)
 ✓ bob is Verified
@@ -196,20 +196,20 @@ refused: could not open: already opened, outside the tolerance window, or altere
 exit 2
 
 10. peers and the vault at rest
-Verified bob              bd3acd78b1  sessions 1  intro consumed
-Verified alice            64fa0a834b  sessions 1  intro unused
-there is no header. first 8 bytes are the salt: 8ccfc8993f3fece6
+Verified bob              f729017593  sessions 1  intro consumed
+Verified alice            f269e56487  sessions 1  intro unused
+there is no header. first 8 bytes are the salt: 71d50f023bb92689
 no plaintext in vault
 
 11. a relay: the one carrier that orders, and it holds ciphertext of a fixed size and nothing else
-relay address: unheld-relay://127.0.0.1:14448#f7b8552b24f033c0b08d34828105c84187bd7f4b03eb8ba5699959231b413703
+relay address: unheld-relay://127.0.0.1:14449#1ae73b8bbeb2beaeb8a213dcb7b463a9d64e8938f7d3bfa79b56b9b17e91ef91
 each makes the queue they will read and hands the other the right to write to it:
-✓ your queue is on  127.0.0.1:14448
+✓ your queue is on  127.0.0.1:14449
 hand the line below to the one person who will send to you, by any channel, and run `unheld relay join` with theirs:
 for a group, hand alice-bob.json itself to every member instead; each passes -c relay:alice-bob.json
-alice's invitation: unheld-relay://127.0.0.1:14448/3417ca7de405d3962157d6b43927b9c7dcda02d54d89b968cb024305af06a2fd/67da4eda11e59e59ce9f8d1da81363c560ec94cbe7f2fb72cc3d1563620124c1#f7b8552b24f033c0b08d34828105c84187bd7f4b03eb8ba5699959231b413703
-✓ alice-bob.json sends to  127.0.0.1:14448  and receives on 127.0.0.1:14448
-✓ bob-alice.json sends to  127.0.0.1:14448  and receives on 127.0.0.1:14448
+alice's invitation: unheld-relay://127.0.0.1:14449/11e371ea6ceb3288ad157cfd02957bdfd374fda3a6206d4690a2c253ee72245d/aa1df148653fbd73b3f780e38d8534007030c1f0e74fd4ebc4dd1c2b59864329#1ae73b8bbeb2beaeb8a213dcb7b463a9d64e8938f7d3bfa79b56b9b17e91ef91
+✓ alice-bob.json sends to  127.0.0.1:14449  and receives on 127.0.0.1:14449
+✓ bob-alice.json sends to  127.0.0.1:14449  and receives on 127.0.0.1:14449
 alice › through a relay that cannot read this
 bob › and back the other way
 what the relay's disk holds, one queue per direction:
@@ -222,11 +222,12 @@ what the relay's disk holds, one queue per direction:
 
 12. an assistant reads and answers for alice, for the one peer she granted, through the same binary and the same relay
 ✓ an agent may read and send with bob through unheld mcp
-revoke with `unheld peers revoke-agent`; the peer is not told, so tell them yourself
+bob is told inside your next message; revoke with `unheld peers revoke-agent`
   agent sees: {"gap": null, "messages": [{"from": "bob", "ref": 0, "session_started": false, "text": "is your assistant reading this?\n", "untrusted": true}], "next_start": null, "peer": "bob", "refused_blobs": 0, "total": 1, "withheld": 0}
   agent sees: {"bytes": 1024, "peer": "bob"}
   tools: peers_list message_send messages_read message_read intro_export carriers_list about (no verify, no enroll, no wipe)
 alice › yes, and it holds no key
+· alice says an assistant reads what you send them
 ```
 
 </details>

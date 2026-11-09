@@ -204,7 +204,7 @@ impl Core {
         if let Some(update) = self.pending_update(&mut group)? {
             parts.push(update);
         }
-        let msg = group.create_message(&self.provider, &signer, &crate::pack_payload(body, None)?).map_err(mls_err)?;
+        let msg = group.create_message(&self.provider, &signer, &crate::pack_payload(body, None, None)?).map_err(mls_err)?;
         parts.push(msg.to_bytes().map_err(mls_err)?);
         let blob = Blob::pad(&frame(&parts)?).map_err(|_| Refuse::TooLarge)?;
         self.save()?;

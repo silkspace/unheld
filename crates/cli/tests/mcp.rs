@@ -109,6 +109,7 @@ fn an_agent_reads_and_answers_only_where_the_person_granted_it_and_no_ceremony_h
     RelayCarrier::join(&bob_link, &invite_a).unwrap();
 
     let long = "x".repeat(5000);
+    bob.grant_agent("alice", true).unwrap();
     RelayCarrier::open(&bob_link).unwrap().put(&bob.seal("alice", long.as_bytes()).unwrap()).unwrap();
     let from_carol = home.join("from-carol.blob");
     FileCarrier::new(from_carol.display().to_string()).put(&carol.seal("alice", b"for alice's eyes").unwrap()).unwrap();
@@ -132,6 +133,8 @@ fn an_agent_reads_and_answers_only_where_the_person_granted_it_and_no_ceremony_h
     let peers = agent.call("peers_list", json!({}));
     let by_name: Vec<(&str, bool)> = peers["structuredContent"]["peers"].as_array().unwrap().iter().map(|p| (p["name"].as_str().unwrap(), p["agent_access"].as_bool().unwrap())).collect();
     assert!(by_name.contains(&("bob", true)) && by_name.contains(&("carol", false)));
+    // Bob's message has not been read yet, so nothing is known about his side.
+    assert!(peers["structuredContent"]["peers"].as_array().unwrap().iter().all(|p| p["agent_reads"] == false));
 
     let refused = agent.call("messages_read", json!({ "peer": "carol" }));
     assert_eq!(refused["isError"], true);
@@ -153,6 +156,11 @@ fn an_agent_reads_and_answers_only_where_the_person_granted_it_and_no_ceremony_h
     assert_eq!(body["text"].as_str().unwrap().len() + tail.len(), long.len());
     assert!(rest["structuredContent"]["next_start"].is_null());
 
+    // Bob's message said an assistant reads what alice sends him, and the model is told so.
+    let peers = agent.call("peers_list", json!({}));
+    let bob_view = peers["structuredContent"]["peers"].as_array().unwrap().iter().find(|p| p["name"] == "bob").unwrap().clone();
+    assert_eq!(bob_view["agent_reads"], true);
+
     let sent = agent.call("message_send", json!({ "peer": "bob", "text": "noted, by the agent" }));
     assert_eq!(sent["isError"], false);
     // The reply went to bob's queue, so alice's next read finds nothing new and refuses nothing.
@@ -164,6 +172,9 @@ fn an_agent_reads_and_answers_only_where_the_person_granted_it_and_no_ceremony_h
     let got = RelayCarrier::open(&bob_link).unwrap().get().unwrap();
     let opened = bob.open(&got).unwrap();
     assert_eq!(opened.iter().find(|o| !o.body.is_empty()).unwrap().body, b"noted, by the agent");
+    // The reply told bob, inside the encryption, that an assistant reads what he sends alice.
+    assert_eq!(opened.iter().filter_map(|o| o.agent_reads).collect::<Vec<_>>(), vec![true]);
+    assert!(bob.peer("alice").unwrap().agent_reads);
 
     let mut agent = Agent::start(&home, "alice", &format!("file:{}", from_carol.display()));
     agent.request("initialize", json!({ "protocolVersion": "2025-06-18" }));

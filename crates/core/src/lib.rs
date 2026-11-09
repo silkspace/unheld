@@ -94,6 +94,10 @@ struct PeerRecord {
     /// Whether the person has let an agent read and send with this peer (docs/decisions/007).
     #[serde(default)]
     agent: bool,
+    /// What the peer last said about their side: an assistant reads what we send them
+    /// (docs/decisions/010-agent-told.md).
+    #[serde(default)]
+    agent_reads: bool,
 }
 
 /// A group above two. The roster itself lives in the MLS group; this remembers the local name
@@ -115,6 +119,8 @@ pub struct Peer {
     pub has_intro: bool,
     /// The person has let an agent read and send with this peer through `unheld mcp`.
     pub agent_access: bool,
+    /// The peer says an assistant reads what you send them; every message of theirs says whether.
+    pub agent_reads: bool,
 }
 
 /// A signed public bundle to hand over out of band.
@@ -163,11 +169,14 @@ pub struct Opened {
     /// Where the sender asks that your next blobs to them be put, in the words of their carrier.
     /// The core carries it and never reads it; the client hands it to the carrier it names.
     pub moved_to: Option<String>,
+    /// The sender says something new about who reads your messages to them: `Some(true)` when
+    /// an assistant now does, `Some(false)` when none does any longer, `None` when nothing changed.
+    pub agent_reads: Option<bool>,
 }
 
 impl Opened {
     fn pairwise(from: String, body: Vec<u8>, session_started: bool) -> Opened {
-        Opened { from, trust: MemberTrust::Verified, vouched_by: None, group: None, body, session_started, change: None, moved_to: None }
+        Opened { from, trust: MemberTrust::Verified, vouched_by: None, group: None, body, session_started, change: None, moved_to: None, agent_reads: None }
     }
 }
 
@@ -415,6 +424,7 @@ impl Core {
                 state,
                 intro: Some(intro.0.clone()),
                 agent: self.state.peers.get(name).map(|p| p.agent).unwrap_or(false),
+                agent_reads: self.state.peers.get(name).is_some_and(|p| p.agent_reads),
                 groups: self
                     .state
                     .peers
@@ -454,6 +464,7 @@ impl Core {
             sessions: rec.groups.len(),
             has_intro: rec.intro.is_some(),
             agent_access: rec.agent,
+            agent_reads: rec.agent_reads,
         })
     }
 
@@ -521,7 +532,7 @@ impl Core {
             parts.push(update);
         }
         let msg = group
-            .create_message(&self.provider, &signer, &pack_payload(body, moved_to)?)
+            .create_message(&self.provider, &signer, &pack_payload(body, moved_to, Some(rec.agent))?)
             .map_err(mls_err)?;
         parts.push(msg.to_bytes().map_err(mls_err)?);
         let blob = Blob::pad(&frame(&parts)?).map_err(|_| Refuse::TooLarge)?;
@@ -588,6 +599,7 @@ impl Core {
                 session_started: true,
                 change: Some(format!("{sender} welcomed you to a group of {members}; {unverified} of them you never verified")),
                 moved_to: None,
+                agent_reads: None,
             });
         }
         if let Some(r) = self.state.peers.get_mut(&sender) {
@@ -613,7 +625,7 @@ impl Core {
                 if let Some(id) = self.state.identity.as_mut() {
                     id.ring = Some(gid);
                 }
-                return Ok(Opened { from: device_name.clone(), trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(format!("{device_name} is now a device of this identity")), moved_to: None });
+                return Ok(Opened { from: device_name.clone(), trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(format!("{device_name} is now a device of this identity")), moved_to: None, agent_reads: None });
             }
             _ if others.len() == 1 => match self.verified_peer(&others[0]) {
                 Some(name) => (Expected::Pair(name.clone()), format!("your session with {name} now reaches {device_name}")),
@@ -642,7 +654,7 @@ impl Core {
                 self.state.groups.insert(local, GroupRecord { group_id: gid, admin });
             }
         }
-        Ok(Opened { from: device_name, trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(text), moved_to: None })
+        Ok(Opened { from: device_name, trust: MemberTrust::Verified, vouched_by: None, group: None, body: Vec::new(), session_started: true, change: Some(text), moved_to: None, agent_reads: None })
     }
 
     /// Where a group id lives: a pairwise session with a peer, a named group, or the ring.
@@ -718,8 +730,18 @@ impl Core {
                     self.receive_ring(&app.into_bytes())?;
                     return Ok(None);
                 }
-                let (body, moved_to) = unpack_payload(&app.into_bytes())?;
-                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body, session_started: false, change: None, moved_to }))
+                let payload = unpack_payload(&app.into_bytes())?;
+                let agent_reads = match (&located, payload.agent_reads) {
+                    (Located::Pair(name), Some(reads)) if !i_sent => {
+                        let rec = self.state.peers.get_mut(name).ok_or(Refuse::UnknownPeer)?;
+                        (rec.agent_reads != reads).then(|| {
+                            rec.agent_reads = reads;
+                            reads
+                        })
+                    }
+                    _ => None,
+                };
+                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body: payload.body, session_started: false, change: None, moved_to: payload.moved_to, agent_reads }))
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
                 // A sender whose new leaf names another identity is rotating its key, and may do
@@ -804,7 +826,7 @@ impl Core {
                 if matches!(located, Located::Ring) {
                     return Ok(None);
                 }
-                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body: Vec::new(), session_started: false, change: Some(change), moved_to: None }))
+                Ok(Some(Opened { from, trust, vouched_by, group: group_name, body: Vec::new(), session_started: false, change: Some(change), moved_to: None, agent_reads: None }))
             }
             _ => Ok(None),
         }
@@ -1036,23 +1058,55 @@ fn frame(parts: &[Vec<u8>]) -> Result<Vec<u8>, Refuse> {
     Ok(out)
 }
 
-/// The body and, when the sender has moved, their new address, as one framed plaintext.
-pub(crate) fn pack_payload(body: &[u8], moved_to: Option<&str>) -> Result<Vec<u8>, Refuse> {
+/// What one application message carries inside the encryption (`config::payload`).
+struct Payload {
+    body: Vec<u8>,
+    moved_to: Option<String>,
+    agent_reads: Option<bool>,
+}
+
+/// The body, then each part that is present under its tag, in ascending tag order, so that one
+/// payload has one encoding.
+pub(crate) fn pack_payload(body: &[u8], moved_to: Option<&str>, agent_reads: Option<bool>) -> Result<Vec<u8>, Refuse> {
     let mut parts = vec![body.to_vec()];
     if let Some(to) = moved_to {
-        parts.push(to.as_bytes().to_vec());
+        parts.push([&[config::payload::MOVED_TO][..], to.as_bytes()].concat());
+    }
+    if let Some(reads) = agent_reads {
+        parts.push(vec![config::payload::AGENT_READS, u8::from(reads)]);
     }
     frame(&parts)
 }
 
-fn unpack_payload(bytes: &[u8]) -> Result<(Vec<u8>, Option<String>), Refuse> {
-    let mut parts = unframe(bytes).map_err(|_| Refuse::Protocol)?.into_iter();
-    let body = parts.next().ok_or(Refuse::Protocol)?;
-    let moved_to = parts.next().map(|p| String::from_utf8(p).map_err(|_| Refuse::Protocol)).transpose()?;
-    if parts.next().is_some() {
+/// A tag out of order, repeated, unknown or with a value of the wrong shape is a protocol error,
+/// because the sender is authenticated and a well-formed client never produces one.
+fn unpack_payload(bytes: &[u8]) -> Result<Payload, Refuse> {
+    let parts = unframe(bytes).map_err(|_| Refuse::Protocol)?;
+    if parts.len() > config::payload::MAX_PARTS {
         return Err(Refuse::Protocol);
     }
-    Ok((body, moved_to))
+    let mut parts = parts.into_iter();
+    let mut payload = Payload { body: parts.next().ok_or(Refuse::Protocol)?, moved_to: None, agent_reads: None };
+    let mut last = 0u8;
+    for part in parts {
+        let (&tag, value) = part.split_first().ok_or(Refuse::Protocol)?;
+        if tag <= last {
+            return Err(Refuse::Protocol);
+        }
+        last = tag;
+        match tag {
+            config::payload::MOVED_TO => payload.moved_to = Some(String::from_utf8(value.to_vec()).map_err(|_| Refuse::Protocol)?),
+            config::payload::AGENT_READS => {
+                payload.agent_reads = Some(match value {
+                    [0] => false,
+                    [1] => true,
+                    _ => return Err(Refuse::Protocol),
+                })
+            }
+            _ => return Err(Refuse::Protocol),
+        }
+    }
+    Ok(payload)
 }
 
 fn unframe(bytes: &[u8]) -> Result<Vec<Vec<u8>>, Refuse> {
@@ -1154,6 +1208,61 @@ mod tests {
     }
 
     /// L8: a blob that frames no message at all is refused, not opened as nothing.
+    #[test]
+    fn a_peer_is_told_inside_every_message_whether_an_assistant_reads_what_they_send() {
+        let a_dir = tmp("told-alice");
+        let b_dir = tmp("told-bob");
+        let mut alice = Core::create(&a_dir, "pw-a", "alice").unwrap();
+        let mut bob = Core::create(&b_dir, "pw-b", "bob").unwrap();
+        let (ia, ib) = (alice.intro().unwrap(), bob.intro().unwrap());
+        alice.import("bob", &ib).unwrap();
+        bob.import("alice", &ia).unwrap();
+        alice.verify("bob", true).unwrap();
+        bob.verify("alice", true).unwrap();
+
+        // No grant: the message says so and bob hears nothing new.
+        let first = alice.seal("bob", b"just me").unwrap();
+        assert!(bob.open(&first).unwrap().iter().all(|o| o.agent_reads.is_none()));
+        assert!(!bob.peer("alice").unwrap().agent_reads);
+
+        // A grant: the next message says an assistant reads, once, and bob's record keeps it.
+        alice.grant_agent("bob", true).unwrap();
+        let granted = alice.seal("bob", b"and my assistant").unwrap();
+        assert_eq!(bob.open(&granted).unwrap().iter().filter_map(|o| o.agent_reads).collect::<Vec<_>>(), vec![true]);
+        let again = alice.seal("bob", b"still").unwrap();
+        assert!(bob.open(&again).unwrap().iter().all(|o| o.agent_reads.is_none()));
+        let mut bob = Core::unlock(&b_dir, "pw-b").unwrap();
+        assert!(bob.peer("alice").unwrap().agent_reads);
+
+        // Bob's own messages say bob has no assistant, and alice's record says so.
+        let reply = bob.seal("alice", b"noted").unwrap();
+        assert!(alice.open(&reply).unwrap().iter().all(|o| o.agent_reads.is_none()));
+        assert!(!alice.peer("bob").unwrap().agent_reads);
+
+        // A revocation: the next message says no assistant reads, once.
+        alice.grant_agent("bob", false).unwrap();
+        let revoked = alice.seal("bob", b"just me again").unwrap();
+        assert_eq!(bob.open(&revoked).unwrap().iter().filter_map(|o| o.agent_reads).collect::<Vec<_>>(), vec![false]);
+        assert!(!bob.peer("alice").unwrap().agent_reads);
+
+        // The payload has one encoding, and anything else is a protocol error.
+        assert_eq!(pack_payload(b"x", None, None).unwrap(), frame(&[b"x".to_vec()]).unwrap());
+        let both = pack_payload(b"x", Some("there"), Some(true)).unwrap();
+        let got = unpack_payload(&both).unwrap();
+        assert_eq!((got.body.as_slice(), got.moved_to.as_deref(), got.agent_reads), (&b"x"[..], Some("there"), Some(true)));
+        for bad in [
+            frame(&[b"x".to_vec(), vec![config::payload::AGENT_READS, 1], vec![config::payload::MOVED_TO, b't']]).unwrap(),
+            frame(&[b"x".to_vec(), vec![config::payload::AGENT_READS, 1], vec![config::payload::AGENT_READS, 1]]).unwrap(),
+            frame(&[b"x".to_vec(), vec![config::payload::AGENT_READS, 2]]).unwrap(),
+            frame(&[b"x".to_vec(), vec![config::payload::AGENT_READS]]).unwrap(),
+            frame(&[b"x".to_vec(), vec![7, 1]]).unwrap(),
+            frame(&[b"x".to_vec(), vec![]]).unwrap(),
+            frame(&[b"x".to_vec(), vec![1, b't'], vec![2, 1], vec![3, 1]]).unwrap(),
+        ] {
+            assert!(matches!(unpack_payload(&bad), Err(Refuse::Protocol)));
+        }
+    }
+
     #[test]
     fn a_frame_with_no_parts_is_refused() {
         let dir = tmp("empty-frame");

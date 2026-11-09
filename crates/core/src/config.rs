@@ -102,8 +102,15 @@ pub mod frame {
     pub const LEN_LEN: usize = 4;
 }
 
-/// What an application message carries inside the encryption: the body, and at most one more
-/// part, where the sender's next blobs should be put (docs/decisions/009-queue-rotation.md).
+/// What an application message carries inside the encryption: the body, then tagged parts in
+/// ascending tag order, each at most once. Where the sender's next blobs should be put
+/// (docs/decisions/009-queue-rotation.md), and whether an assistant reads what the sender
+/// receives (docs/decisions/010-agent-told.md).
 pub mod payload {
-    pub const MAX_PARTS: usize = 2;
+    /// The body and every tag below.
+    pub const MAX_PARTS: usize = 3;
+    /// A UTF-8 string in the sender's carrier's words.
+    pub const MOVED_TO: u8 = 1;
+    /// One byte, 0 or 1.
+    pub const AGENT_READS: u8 = 2;
 }

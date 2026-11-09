@@ -54,7 +54,8 @@ def test_verify_is_the_only_constructor_and_a_blob_opens_once(tmp_path: Path) ->
     opened = bob.open(blob)
     assert opened[0].session_started and opened[0].body == b""
     assert [o.body for o in opened if o.body] == [b"hello from python"]
-    assert all(o.moved_to is None for o in opened)
+    assert all(o.moved_to is None and o.agent_reads is None for o in opened)
+    assert not bob.peer("alice").agent_reads
     assert {o.sender for o in opened} == {"alice"}
     assert {o.trust for o in opened} == {unheld.MemberTrust.Verified}
 
@@ -85,6 +86,12 @@ def test_the_vault_persists_what_each_verb_wrote(tmp_path: Path) -> None:
     alice = unheld.Core.unlock(tmp_path / "alice", PASS)
     moved = alice.seal("bob", b"and my queue moved", moved_to="wherever the program's transport says")
     assert [(o.body, o.moved_to) for o in bob.open(moved)] == [(b"and my queue moved", "wherever the program's transport says")]
+
+    alice.grant_agent("bob", True)
+    told = bob.open(alice.seal("bob", b"and an assistant reads your replies"))
+    assert [o.agent_reads for o in told] == [True]
+    assert bob.peer("alice").agent_reads
+    assert [o.agent_reads for o in bob.open(alice.seal("bob", b"still does"))] == [None]
 
     unheld.wipe(tmp_path / "bob")
     with pytest.raises(unheld.Refused) as refused:

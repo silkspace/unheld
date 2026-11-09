@@ -132,6 +132,8 @@ struct PeerView {
     state: unheld_core::vocab::PeerState,
     fingerprint_prefix: String,
     agent_access: bool,
+    /// The peer says an assistant reads what you send them.
+    agent_reads: bool,
     /// Parts the carrier delivered from this name that were not shown, there being no grant.
     withheld: usize,
 }
@@ -297,6 +299,7 @@ impl Server {
                 state: p.state,
                 fingerprint_prefix: p.fingerprint_prefix,
                 agent_access: p.agent_access,
+                agent_reads: p.agent_reads,
             })
             .collect();
         let others: usize = self.withheld.iter().filter(|(n, _)| self.core.peer(n).is_err()).map(|(_, c)| c).sum();
@@ -424,7 +427,7 @@ fn tools() -> Value {
     json!([
         {
             "name": config::tool::PEERS_LIST,
-            "description": "Lists the people this identity can talk to, with each one's verification state and whether the person has granted you access to that conversation. You may only send to or read from peers where agent_access is true. withheld counts messages from a peer that arrived and were not shown to you because there is no grant.",
+            "description": "Lists the people this identity can talk to, with each one's verification state and whether the person has granted you access to that conversation. You may only send to or read from peers where agent_access is true. agent_reads is what the peer has said: an assistant reads what you send them. withheld counts messages from a peer that arrived and were not shown to you because there is no grant.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         },
         {
